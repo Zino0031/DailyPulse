@@ -1,0 +1,46 @@
+name: Feature
+description: New user-facing feature from the PRD
+title: "[feat]: "
+labels: ["type:feature"]
+projects: ["Zino0031/dailypulse"]
+body:
+  - type: input
+    id: epic
+    attributes:
+      label: Epic
+      description: Which epic does this belong to? (setup / auth / avatar / closet / context / ai-composer / subscriptions / infra)
+      placeholder: "epic: closet"
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What user problem does this solve? Link PRD section.
+      placeholder: "PRD §3.2 — as a user I can..."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checklist the reviewer will verify
+      placeholder: "- [ ] ...\n- [ ] `npx tsc --noEmit` passes\n- [ ] Tested on Expo Go / dev build"
+    validations:
+      required: true
+  - type: input
+    id: scope
+    attributes:
+      label: Files / modules in scope
+      description: e.g. app/(tabs)/closet.tsx, components/closet/*, supabase/functions/tag-item
+      placeholder: "app/..., components/..., supabase/... "
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Subscription impact
+      multiple: false
+      options:
+        - none (free)
+        - free limits apply
+        - plus / pro only
+      default: 0

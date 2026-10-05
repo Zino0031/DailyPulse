@@ -1,0 +1,92 @@
+[
+  {
+    "title": "[task] Epic 0 — App shell, providers, NativeWind, lint/typecheck",
+    "labels": ["epic:setup", "type:task", "priority:high"],
+    "body": "## Goal\nStandalone runnable shell per `docs/PROJECT_STRUCTURE.md` + `docs/AGENT_RULES.md`.\n\n## Work\n- [ ] Wire root `app/_layout.tsx` providers: SafeArea, TanStack Query, Auth gate\n- [ ] Verify NativeWind v4 + tailwind config builds on web + Expo Go\n- [ ] Add `.env.example` (`EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`)\n- [ ] Document `npx expo start`, `npx tsc --noEmit`, `npx expo-doctor` in README\n\n## Done\n- [ ] `npx tsc --noEmit` passes\n- [ ] Tabs render on web + mobile without console errors\n\nDocs: `docs/ARCHITECTURE.md` §1, `docs/AGENT_RULES.md`."
+  },
+  {
+    "title": "[task] Epic 0 — Supabase project, migrations, RLS, Storage buckets",
+    "labels": ["epic:setup", "type:task", "priority:high"],
+    "body": "## Goal\nBackend foundation per ERD in `docs/ARCHITECTURE.md` §3.\n\n## Work\n- [ ] Create Supabase project, link with `supabase link`\n- [ ] Migration `users`, `avatars`, `wardrobe_items`, `outfits`, `subscriptions` tables\n- [ ] Enable RLS: users can only read/write own `user_id = auth.uid()` rows\n- [ ] Storage buckets: `avatars` (public read), `wardrobe` (private), `outfits` (private)\n- [ ] Seed `types/database.ts` from generated types\n\n## Done\n- [ ] Migration applies cleanly on fresh project\n- [ ] RLS verified with two test users\n\nDocs: `docs/ARCHITECTURE.md` §3."
+  },
+  {
+    "title": "[task] Epic 0 — CI workflow (lint, typecheck, expo-doctor)",
+    "labels": ["epic:setup", "type:task", "priority:medium"],
+    "body": "## Goal\nPrevent broken PRs.\n\n## Work\n- [ ] `.github/workflows/ci.yml`: install, `tsc --noEmit`, `expo-doctor`, `expo export --platform web` smoke\n- [ ] Branch protection suggestion: require CI on `dev`\n\n## Done\n- [ ] CI green on this repo\n\nDocs: `docs/AGENT_RULES.md`."
+  },
+  {
+    "title": "[feat] Epic 1 — Auth flow (sign-in / sign-up) + session store",
+    "labels": ["epic:auth", "type:feature", "priority:high"],
+    "body": "## Goal\nPRD onboarding entry. User can register, log in, stay logged in.\n\n## Scope\n`app/(auth)/sign-in.tsx`, `app/(auth)/sign-up.tsx`, `store/useAuthStore.ts`, `hooks/useAuth.ts`, `services/supabase.ts`\n\n## Acceptance\n- [ ] Email auth via Supabase, session persisted\n- [ ] Auth gate redirects unauthenticated to `(auth)`, authenticated to `(tabs)`\n- [ ] `npx tsc --noEmit` passes\n\nDocs: `docs/PRD.md` §3.1."
+  },
+  {
+    "title": "[feat] Epic 1 — Onboarding profile form (name, location, style)",
+    "labels": ["epic:auth", "type:feature", "priority:high"],
+    "body": "## Goal\nCollect name + location (lat/lon for Open-Meteo) + style prefs.\n\n## Scope\n`app/onboarding/index.tsx`, `app/onboarding/profile-form.tsx`, `users` row upsert\n\n## Acceptance\n- [ ] Form validates, saves to `users` table\n- [ ] Location picker stores lat/lon\n- [ ] Skippable / resumable if closed mid-flow\n\nDocs: `docs/PRD.md` §3.1."
+  },
+  {
+    "title": "[feat] Epic 2 — Avatar capture + upload + active avatar",
+    "labels": ["epic:avatar", "type:feature", "priority:high"],
+    "body": "## Goal\nUser selfie becomes reusable avatar asset.\n\n## Scope\n`app/onboarding/avatar-capture.tsx`, `components/avatar/AvatarPreview.tsx`, `avatars` table, `avatars` Storage bucket\n\n## Acceptance\n- [ ] `expo-image-picker` capture/upload works\n- [ ] Upload to Storage, row in `avatars` with `is_active=true`\n- [ ] Preview shown on Home + Profile\n- [ ] Free path works without paid AI; AI stylization stubbed behind edge function\n\nDocs: `docs/PRD.md` §3.1, `docs/ARCHITECTURE.md` §4 pipeline 1."
+  },
+  {
+    "title": "[feat] Epic 3 — Closet grid UI + add / edit / delete items",
+    "labels": ["epic:closet", "type:feature", "priority:high", "good first issue"],
+    "body": "## Goal\nDigital wardrobe management.\n\n## Scope\n`app/(tabs)/closet.tsx`, `components/closet/ClosetGrid.tsx`, `hooks/useCloset.ts` (TanStack Query)\n\n## Acceptance\n- [ ] Grid with `expo-image` caching, category filter chips\n- [ ] Add via camera/gallery, edit tags, delete with confirm\n- [ ] Optimistic updates, offline-readable cache\n\nDocs: `docs/PRD.md` §3.2."
+  },
+  {
+    "title": "[task] Epic 3 — Background removal for wardrobe uploads (free tier)",
+    "labels": ["epic:closet", "type:task", "priority:medium"],
+    "body": "## Goal\nClean cutout images for composer.\n\n## Work\n- [ ] Pick free-tier approach (client ONNX or serverless function), document cost\n- [ ] `supabase/functions/process-image` or client util + fallback to original\n- [ ] Store processed URL on `wardrobe_items.image_url`\n\n## Done\n- [ ] Upload still succeeds if removal fails (graceful fallback)\n\nDocs: `docs/PRD.md` §3.2."
+  },
+  {
+    "title": "[task] Epic 3 — Vision auto-tagging edge function (Gemini Flash free tier)",
+    "labels": ["epic:closet", "type:task", "priority:high"],
+    "body": "## Goal\nAuto-fill category, colors, formality, season.\n\n## Work\n- [ ] `supabase/functions/tag-item`: image -> Gemini Flash -> strict JSON `{category, colors, formality, season}`\n- [ ] Secrets only in edge function, never in client (`docs/AGENT_RULES.md` §2)\n- [ ] Client shows suggested tags, user can override before save\n\n## Done\n- [ ] Tagging < 3s p95 per PRD NFR\n- [ ] Invalid JSON safely rejected + logged\n\nDocs: `docs/PRD.md` §3.2, `docs/ARCHITECTURE.md` §4 pipeline 2."
+  },
+  {
+    "title": "[feat] Epic 4 — Weather service + widget (Open-Meteo, keyless)",
+    "labels": ["epic:context", "type:feature", "priority:high", "good first issue"],
+    "body": "## Goal\nReal-time local meteo drives outfit logic.\n\n## Scope\n`services/weather.ts`, `hooks/useWeather.ts`, `components/home/WeatherWidget.tsx`\n\n## Acceptance\n- [ ] Fetch temp, precipitation, wind, UV from Open-Meteo with lat/lon\n- [ ] < 1s cached, stale-while-revalidate via TanStack Query\n- [ ] Widget shows icon + temp + rain chance; error/loading states\n\nDocs: `docs/PRD.md` §3.3, NFR latency < 1s."
+  },
+  {
+    "title": "[feat] Epic 4 — Calendar sync + event tagging (expo-calendar)",
+    "labels": ["epic:context", "type:feature", "priority:medium"],
+    "body": "## Goal\nDetect meeting vs gym vs casual.\n\n## Scope\n`app/(tabs)/calendar.tsx`, calendar permission hook, keyword tagger (meeting, gym, date, formal, casual)\n\n## Acceptance\n- [ ] Permission flow with graceful deny\n- [ ] Today's events listed with derived dress-code tag\n- [ ] Tag fed into outfit prompt builder\n\nDocs: `docs/PRD.md` §3.3."
+  },
+  {
+    "title": "[feat] Epic 4 — Mood selector + preference store",
+    "labels": ["epic:context", "type:feature", "priority:medium", "good first issue"],
+    "body": "## Goal\n3-tap mood input on Home.\n\n## Scope\nMood selector component, `store/useUserPreferencesStore.ts`\n\n## Acceptance\n- [ ] Moods: Energetic, Professional, Relaxed, Creative (extendable)\n- [ ] Selection persists + included in generation request\n\nDocs: `docs/PRD.md` §3.3."
+  },
+  {
+    "title": "[feat] Epic 5 — Daily Home / morning workflow screen",
+    "labels": ["epic:ai-composer", "type:feature", "priority:high"],
+    "body": "## Goal\n30-second decision-fatigue flow: weather + events + mood -> CTA generate.\n\n## Scope\n`app/(tabs)/index.tsx`, `components/home/*`\n\n## Acceptance\n- [ ] Shows weather, today's top event, mood selector, Generate button\n- [ ] Loading / empty-closet / error states per AGENT_RULES\n- [ ] Navigates to `app/outfit/[id].tsx` on success\n\nDocs: `docs/PRD.md` §2 journeys, §3.3–3.4."
+  },
+  {
+    "title": "[task] Epic 5 — Outfit picker edge function (weather + event + mood -> item_ids)",
+    "labels": ["epic:ai-composer", "type:task", "priority:high"],
+    "body": "## Goal\nLLM selects best `wardrobe_items` combo; enforces tier daily limits.\n\n## Work\n- [ ] `supabase/functions/generate-outfit`: inputs `{weather, events, mood, tier}` -> `{item_ids[3-5], reasoning}`\n- [ ] Free: 1/day, Plus: 5/day, Pro: unlimited (check `users.tier` + `outfits.created_at`)\n- [ ] Return 429 with upgrade hint when capped\n\n## Done\n- [ ] No secrets in client; prompt builder versioned + logged\n\nDocs: `docs/ARCHITECTURE.md` §4 pipeline 3, `docs/PRD.md` §3.4–3.5."
+  },
+  {
+    "title": "[feat] Epic 5 — Outfit detail + AI render + regenerate (3–5 previews)",
+    "labels": ["epic:ai-composer", "type:feature", "priority:high"],
+    "body": "## Goal\nSee avatar wearing the picks; regenerate on demand.\n\n## Scope\n`app/outfit/[id].tsx`, `outfits` table, render pipeline (HF/Replicate free tier or overlay fallback)\n\n## Acceptance\n- [ ] 3–5 previews, save/unsave (`is_saved`), regenerate respects tier caps\n- [ ] Generation target 8–12s with progress UI; failure retry\n- [ ] Images cached via `expo-image`\n\nDocs: `docs/PRD.md` §3.4 + NFR."
+  },
+  {
+    "title": "[feat] Epic 5 — Saved lookbook / outfit history",
+    "labels": ["epic:ai-composer", "type:feature", "priority:low"],
+    "body": "## Goal\nFashion-enthusiast weekly lookbook.\n\n## Scope\nHistory list querying `outfits where is_saved`, detail reuse\n\n## Acceptance\n- [ ] Saved outfits persist across restarts, deletable\n\nDocs: `docs/PRD.md` §2.2."
+  },
+  {
+    "title": "[feat] Epic 6 — RevenueCat paywall + tier gating (Free/Plus/Pro)",
+    "labels": ["epic:subscriptions", "type:feature", "priority:high"],
+    "body": "## Goal\nMonetization with free-first limits.\n\n## Scope\n`app/(tabs)/profile.tsx`, paywall component, `subscriptions` table + webhook, `users.tier` sync\n\n## Acceptance\n- [ ] Free: 50 items, 1 gen/day, standard res. Plus: 250 items, 5/day + regenerate. Pro: unlimited + hi-res\n- [ ] Paywall triggers on cap; restore purchases works\n- [ ] Test-mode verified without real charges\n\nDocs: `docs/PRD.md` §3.5."
+  },
+  {
+    "title": "[task] Epic 7 — Offline cache + image performance pass",
+    "labels": ["epic:infra", "type:task", "priority:medium"],
+    "body": "## Goal\nUsable offline, smooth closet scrolling.\n\n## Work\n- [ ] Cache wardrobe + last weather + last outfit (MMKV/SQLite + Query persist)\n- [ ] `expo-image` tuning, list virtualization, prefetch\n- [ ] Measure: cold start, closet scroll FPS, offline open\n\n## Done\n- [ ] Airplane-mode open shows cached closet + last outfit\n\nDocs: `docs/PRD.md` §4 NFR."
+  }
+]

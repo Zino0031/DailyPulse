@@ -1,0 +1,28 @@
+name: Task
+description: Small actionable card a teammate can grab (setup, backend, chore)
+title: "[task]: "
+labels: ["type:task"]
+body:
+  - type: input
+    id: epic
+    attributes:
+      label: Epic
+      description: setup / auth / avatar / closet / context / ai-composer / subscriptions / infra
+      placeholder: "epic: setup"
+    validations:
+      required: true
+  - type: textarea
+    id: work
+    attributes:
+      label: Work to do
+      description: Concrete steps
+      placeholder: "- [ ] step 1\n- [ ] step 2"
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+      placeholder: "- [ ] `npx tsc --noEmit` passes\n- [ ] `npx expo-doctor` clean (if native deps changed)"
+    validations:
+      required: true

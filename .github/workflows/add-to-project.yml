@@ -1,0 +1,33 @@
+name: Add issues and PRs to team board
+
+# Auto-adds every new issue / PR to the GitHub Projects V2 board
+# so teammates can grab cards from Todo -> In Progress -> Done.
+# Setup (one time, owner only):
+#   1. Create a Projects V2 board "dailypulse board" with columns:
+#      Todo, In Progress, In Review, Done (Board layout + Status field).
+#   2. Repo Settings -> Actions -> General -> Workflow permissions = Read and write.
+#   3. Add repo secret PROJECT_URL, e.g.
+#      https://github.com/users/Zino0031/projects/1
+#      (org boards use https://github.com/orgs/<org>/projects/<n>)
+
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Add to project
+        uses: actions/add-to-project@v1.0.2
+        with:
+          project-url: ${{ secrets.PROJECT_URL }}
+          github-token: ${{ secrets.ADD_TO_PROJECT_PAT }}

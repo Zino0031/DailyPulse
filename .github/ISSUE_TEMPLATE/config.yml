@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Product docs
+    url: https://github.com/Zino0031/dailypulse/blob/dev/docs/PRD.md
+    about: Read the PRD before picking up a card
+  - name: Architecture
+    url: https://github.com/Zino0031/dailypulse/blob/dev/docs/ARCHITECTURE.md
+    about: Tech stack, ERD and AI pipeline spec
+  - name: Team backlog board
+    url: https://github.com/Zino0031/dailypulse/blob/dev/docs/BACKLOG.md
+    about: All grab-and-work cards grouped by epic

@@ -1,0 +1,25 @@
+name: Bug
+description: Something broken in the app
+title: "[bug]: "
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      placeholder: "1. Open tab ...\n2. Tap ...\n3. Crash / wrong data"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device / environment
+      placeholder: "Expo Go Android, SDK 57 / iOS simulator / web"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
