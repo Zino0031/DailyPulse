@@ -1,6 +1,12 @@
 import '../global.css';
 import { useFonts } from 'expo-font';
 import {
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+} from '@expo-google-fonts/inter';
+import {
   DarkTheme,
   DefaultTheme,
   Stack,
@@ -41,6 +47,10 @@ const queryClient = new QueryClient({
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
   });
   const colorScheme = useColorScheme();
 
