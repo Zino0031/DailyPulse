@@ -34,7 +34,13 @@
           "backgroundColor": "#ffffff"
         }
       ],
-      "expo-image"
+      "expo-image",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow myOutfit to use your location for local weather."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

@@ -1,31 +1,31 @@
-import { StyleSheet } from 'react-native';
+import { Text, View } from 'react-native';
 
-import EditScreenInfo from '@/components/EditScreenInfo';
-import { Text, View } from '@/components/Themed';
+import { WeatherWidget } from '@/components/home/WeatherWidget';
+import { useDeviceLocation } from '@/hooks/useLocation';
+import { DEFAULT_COORDINATES } from '@/services/weather';
 
-export default function TabOneScreen() {
+// TODO (Epic 5 — Daily Home): replace with the full morning-workflow layout
+// (weather + top event + mood selector + Generate CTA). This minimal screen
+// only proves the weather service + widget render end to end.
+export default function HomeScreen() {
+  const { coordinates, placeLabel, status } = useDeviceLocation();
+  const effective = coordinates ?? DEFAULT_COORDINATES;
+  const usingGps = status === 'granted';
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Tab One</Text>
-      <View style={styles.separator} lightColor="#eee" darkColor="rgba(255,255,255,0.1)" />
-      <EditScreenInfo path="app/(tabs)/index.tsx" />
+    <View className="flex-1 bg-bg px-6 pt-12">
+      <Text className="text-title-1 font-bold text-text">Today</Text>
+      <Text className="mb-8 mt-1 text-footnote text-text-muted">
+        {usingGps
+          ? 'Weather for your current location.'
+          : 'Weather for the default area — enable location for GPS.'}
+      </Text>
+      <WeatherWidget
+        coordinates={effective}
+        placeLabel={
+          usingGps ? (placeLabel ?? 'GPS location') : 'Default area'
+        }
+      />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  separator: {
-    marginVertical: 30,
-    height: 1,
-    width: '80%',
-  },
-});
