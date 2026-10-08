@@ -13,7 +13,10 @@ import {
   ThemeProvider,
   useRouter,
   useSegments,
+  type Href,
 } from 'expo-router';
+// Welcome lives at /welcome inside the (auth) group — typed-routes won't
+// know about it until the next `expo start`, so we cast when navigating.
 import * as SplashScreen from 'expo-splash-screen';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect, type ReactNode } from 'react';
@@ -95,7 +98,7 @@ function BootGate({
 }) {
   const router = useRouter();
   const segments = useSegments();
-  const { session, isLoading } = useAuth();
+  const { session, isLoading, isRecovering } = useAuth();
 
   const ready = fontsLoaded && !isLoading;
 
@@ -107,13 +110,16 @@ function BootGate({
 
   useEffect(() => {
     if (!ready) return;
+    // While handling a password-recovery deep link, let the reset-password
+    // screen stay mounted even though a (recovery) session exists.
+    if (isRecovering) return;
     const inAuthGroup = segments[0] === '(auth)';
     if (!session && !inAuthGroup) {
-      router.replace('/sign-in');
+      router.replace('/welcome' as Href);
     } else if (session && inAuthGroup) {
       router.replace('/(tabs)');
     }
-  }, [ready, session, segments, router]);
+  }, [ready, session, segments, router, isRecovering]);
 
   if (!ready) return null;
   return <>{children}</>;
