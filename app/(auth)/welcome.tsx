@@ -26,14 +26,16 @@ export default function WelcomeScreen() {
 
       <SafeAreaView className="flex-1" edges={["top", "bottom"]}>
         <View className="flex-1 px-6">
-          <View className="items-center pt-6">
-            <MaterialCommunityIcons name="hanger" color={BRAND} size={48} />
+          <View className="pt-6">
+            <MaterialCommunityIcons
+              name="hanger"
+              color={scheme === "dark" ? "white" : BRAND}
+              size={64}
+            />
 
-            <Text className="mt-4 text-center text-title-1 font-bold text-text">
-              Your style,{"\n"}simplified.
-            </Text>
-            <Text className="mt-3 text-center text-callout text-text-muted">
-              We&apos;ll help you choose what{"\n"}to wear, every day.
+            <Text className="mt-2 font-light text-6xl text-text">
+              We&apos;ll help you{"\n"}choose what{"\n"}to wear, {"\n"}every
+              day.
             </Text>
           </View>
 
