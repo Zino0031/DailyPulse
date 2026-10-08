@@ -83,6 +83,13 @@ export default function RootLayout() {
 }
 
 /**
+ * Dev-only escape hatch for previewing protected screens before Epic 1
+ * lands real auth. Set EXPO_PUBLIC_BYPASS_AUTH=true in your local .env
+ * (never commit .env). Absent/false = normal gate behavior.
+ */
+const DEV_BYPASS_AUTH = process.env.EXPO_PUBLIC_BYPASS_AUTH === 'true';
+
+/**
  * Holds the splash screen until boot finishes, then enforces the auth gate:
  * signed-out users live in `(auth)`, signed-in users are sent to `(tabs)`.
  */
@@ -106,7 +113,7 @@ function BootGate({
   }, [ready]);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || DEV_BYPASS_AUTH) return;
     const inAuthGroup = segments[0] === '(auth)';
     if (!session && !inAuthGroup) {
       router.replace('/sign-in');
