@@ -2,11 +2,11 @@
 module.exports = {
   content: ['./app/**/*.{js,jsx,ts,tsx}', './components/**/*.{js,jsx,ts,tsx}'],
   presets: [require('nativewind/preset')],
-  darkMode: 'class',
+  darkMode: 'media',
   theme: {
     extend: {
       colors: {
-        // Theme-aware neutrals — flip with the .dark class in global.css
+        // Theme-aware neutrals — flip via prefers-color-scheme in global.css
         bg: 'rgb(var(--color-bg) / <alpha-value>)',
         surface: 'rgb(var(--color-surface) / <alpha-value>)',
         'surface-elevated':
