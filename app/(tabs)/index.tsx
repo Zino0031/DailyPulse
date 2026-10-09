@@ -1,7 +1,8 @@
-import { ScrollView, Text, View } from 'react-native';
+import { Linking, ScrollView, Text, View } from 'react-native';
 
 import { WeatherWidget } from '@/components/home/WeatherWidget';
 import { MoodSelector } from '@/components/home/MoodSelector';
+import { SchedulePreview } from '@/components/home/SchedulePreview';
 import { useDeviceLocation } from '@/hooks/useLocation';
 import { DEFAULT_COORDINATES } from '@/services/weather';
 
@@ -9,7 +10,7 @@ import { DEFAULT_COORDINATES } from '@/services/weather';
 // (weather + top event + mood selector + Generate CTA). This minimal screen
 // only proves the weather service + widget render end to end.
 export default function HomeScreen() {
-  const { coordinates, placeLabel, status } = useDeviceLocation();
+  const { coordinates, placeLabel, status, blocked, retry } = useDeviceLocation();
   const effective = coordinates ?? DEFAULT_COORDINATES;
   const usingGps = status === 'granted';
 
@@ -21,16 +22,32 @@ export default function HomeScreen() {
       <Text className="mb-8 mt-1 text-footnote text-text-muted">
         {usingGps
           ? 'Weather for your current location.'
-          : 'Weather for the default area — enable location for GPS.'}
+          : 'Default area — tap the target icon for live GPS.'}
       </Text>
       <WeatherWidget
         coordinates={effective}
         placeLabel={
           usingGps ? (placeLabel ?? 'GPS location') : 'Default area'
         }
+        locationAction={
+          status === 'loading'
+            ? null
+            : {
+                active: usingGps,
+                label: usingGps
+                  ? 'Location active'
+                  : blocked
+                    ? 'Open location settings'
+                    : 'Enable location',
+                onPress: () => (blocked ? Linking.openSettings() : retry()),
+              }
+        }
       />
       <View className="mt-8">
         <MoodSelector />
+      </View>
+      <View className="mt-8">
+        <SchedulePreview />
       </View>
     </ScrollView>
   );

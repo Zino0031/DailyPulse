@@ -8,6 +8,7 @@ import {
   CloudSnow,
   CloudSun,
   Cloudy,
+  LocateFixed,
   MapPin,
   Moon,
   Sun,
@@ -25,6 +26,12 @@ interface WeatherWidgetProps {
   coordinates?: Coordinates;
   /** e.g. "Algiers, Algeria". Falls back to raw coordinates. */
   placeLabel?: string | null;
+  /** GPS action for the in-card locate button; hidden when omitted. */
+  locationAction?: {
+    active: boolean;
+    label: string;
+    onPress: () => void;
+  } | null;
 }
 
 /**
@@ -34,6 +41,7 @@ interface WeatherWidgetProps {
 export function WeatherWidget({
   coordinates = DEFAULT_COORDINATES,
   placeLabel = null,
+  locationAction = null,
 }: WeatherWidgetProps) {
   const { data, isLoading, isError, refetch, isFetching } =
     useWeather(coordinates);
@@ -98,6 +106,24 @@ export function WeatherWidget({
             {Math.round(current.apparentTemperatureC)}°
           </Text>
         </View>
+        {locationAction && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={locationAction.label}
+            disabled={locationAction.active}
+            onPress={locationAction.onPress}
+            className={`h-9 w-9 items-center justify-center rounded-full border ${
+              locationAction.active
+                ? 'border-transparent bg-primary-tint'
+                : 'border-border bg-surface'
+            }`}>
+            <LocateFixed
+              size={16}
+              strokeWidth={1.5}
+              color={locationAction.active ? '#5B47FB' : '#9CA3AF'}
+            />
+          </Pressable>
+        )}
       </View>
       <View className="mt-4 flex-row items-center gap-2">
         <MapPin size={14} strokeWidth={1.5} color="#9CA3AF" />

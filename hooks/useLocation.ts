@@ -16,6 +16,8 @@ export interface DeviceLocation {
   /** "City, Country" from reverse-geocode; null when unavailable. */
   placeLabel: string | null;
   status: LocationStatus;
+  /** True when the OS won't show the prompt again — send user to Settings. */
+  blocked: boolean;
   retry: () => void;
 }
 
@@ -29,20 +31,32 @@ export function useDeviceLocation(): DeviceLocation {
   const [coordinates, setCoordinates] = useState<Coordinates | null>(null);
   const [placeLabel, setPlaceLabel] = useState<string | null>(null);
   const [status, setStatus] = useState<LocationStatus>('loading');
+  const [blocked, setBlocked] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
+        // Explicit retries (tap) may turn services on via the OS dialog;
+        // the passive first run never interrupts the user.
+        if (attempt > 0 && Platform.OS === 'android') {
+          try {
+            await Location.enableNetworkProviderAsync();
+          } catch {
+            // Declined — continue, the fix may still succeed.
+          }
+        }
         const servicesOn = await Location.hasServicesEnabledAsync();
         if (!servicesOn) {
           if (mounted) setStatus('unavailable');
           return;
         }
-        const { status: permission } =
-          await Location.requestForegroundPermissionsAsync();
-        if (permission !== 'granted') {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (mounted) {
+          setBlocked(!permission.granted && !permission.canAskAgain);
+        }
+        if (permission.status !== 'granted') {
           if (mounted) setStatus('denied');
           return;
         }
@@ -97,11 +111,12 @@ export function useDeviceLocation(): DeviceLocation {
   }, [attempt]);
 
   const retry = useCallback(() => {
+    setBlocked(false);
     setStatus('loading');
     setAttempt((n) => n + 1);
   }, []);
 
-  return { coordinates, placeLabel, status, retry };
+  return { coordinates, placeLabel, status, blocked, retry };
 }
 
 /**
