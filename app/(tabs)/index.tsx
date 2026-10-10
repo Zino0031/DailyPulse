@@ -1,6 +1,7 @@
-import { Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 
 import { WeatherWidget } from '@/components/home/WeatherWidget';
+import { MoodSelector } from '@/components/home/MoodSelector';
 import { useDeviceLocation } from '@/hooks/useLocation';
 import { DEFAULT_COORDINATES } from '@/services/weather';
 
@@ -13,7 +14,9 @@ export default function HomeScreen() {
   const usingGps = status === 'granted';
 
   return (
-    <View className="flex-1 bg-bg px-6 pt-12">
+    <ScrollView
+      className="flex-1 bg-bg"
+      contentContainerClassName="px-6 pb-8 pt-12">
       <Text className="text-title-1 font-bold text-text">Today</Text>
       <Text className="mb-8 mt-1 text-footnote text-text-muted">
         {usingGps
@@ -26,6 +29,9 @@ export default function HomeScreen() {
           usingGps ? (placeLabel ?? 'GPS location') : 'Default area'
         }
       />
-    </View>
+      <View className="mt-8">
+        <MoodSelector />
+      </View>
+    </ScrollView>
   );
 }
