@@ -86,18 +86,18 @@ export function MoodSelector({
 
   return (
     
-    <div className="radius-24  w-full  rounded-2xl shadow-lg">
+    <View className="radius-24  w-full  rounded-2xl shadow-lg">
       <LinearGradient
       colors={CARD_GRADIENT[mood]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={{ borderRadius: 24, paddingLeft: 16, paddingRight: 16, paddingBottom: 16 , boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)'}}
       >
-      <View className="relative  mb-4 h-[160] items-center justify-center">
+      <View className="relative mb-4 h-[160] items-center justify-center">
         <MoodFace mood={mood} />
-        <div  className="absolute ">
-        <MoodHalo mood={mood} />
-        </div>
+        <View className="absolute">
+            <MoodHalo mood={mood} />
+          </View>
       </View>
       <Text className="text-left text-title-3 font-semibold  text-[#0A0C0F]">
         {label}
@@ -136,6 +136,6 @@ export function MoodSelector({
         })}
       </View>
     </LinearGradient>
-                  </div>
+                  </View>
   );
 }

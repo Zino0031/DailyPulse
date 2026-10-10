@@ -52,12 +52,12 @@ interface HaloSet {
 // (content ~302pt wide): corners + mid-sides + bottom flanks. Every slot
 // clears the face box (x 107–195, y 36–124) with margin to spare.
 const SLOTS = {
-  topLeft: { left: 56, top: 6 },
-  topRight: { right: 59, top: 6 },
-  midLeft: { left: 66, top: 13 },
+  topLeft: { left: 56, top: 46 },
+  topRight: { right: 59, top: 16 },
+  midLeft: { left: 66, top: 23 },
   midRight: { right: 66, top: 13 },
-  bottomLeft: { left: 64, top: 18 },
-  bottomRight: { right: 34, top: 18 },
+  bottomLeft: { left: 64, top: 8 },
+  bottomRight: { right: 34, top: -10 },
 } as const;
 
 const HALO: Record<Mood, HaloSet> = {
@@ -147,8 +147,8 @@ function FloatingIcon({
   return (
     <Animated.View
       entering={FadeIn.duration(300)}
-      style={[slot, animatedStyle]}
-      className=" rounded-full bg-white/85 p-2 shadow-sm">
+      style={[slot, animatedStyle, { padding: 4 }]}
+      className="  shadow-lg">
       <Icon size={24} strokeWidth={1.5} color={color} />
     </Animated.View>
   );
