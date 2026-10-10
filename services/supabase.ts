@@ -16,6 +16,13 @@ import type { Database } from '@/types/database';
 // the error from getSupabase().
 let client: SupabaseClient<Database> | null = null;
 
+export function isSupabaseConfigured(): boolean {
+  return Boolean(
+    process.env.EXPO_PUBLIC_SUPABASE_URL &&
+      process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+  );
+}
+
 export function getSupabase(): SupabaseClient<Database> {
   if (client) return client;
 

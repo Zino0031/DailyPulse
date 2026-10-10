@@ -3,6 +3,10 @@
 // Regenerate from a linked project with:
 //   supabase gen types typescript --linked > types/database.ts
 // and keep these hand-written literals in sync afterwards.
+//
+// NOTE: rows must stay `type` literals, never `interface` — postgrest-js
+// infers through `Row extends Record<string, unknown>` and interfaces
+// silently collapse single()/maybeSingle() results to `never`.
 
 export type Tier = 'free' | 'plus' | 'pro';
 export type WardrobeCategory =
@@ -13,7 +17,7 @@ export type WardrobeCategory =
   | 'accessory';
 export type Formality = 'casual' | 'business' | 'formal' | 'athletic';
 
-export interface UserRow {
+export type UserRow = {
   id: string;
   email: string | null;
   full_name: string;
@@ -21,17 +25,17 @@ export interface UserRow {
   location_lon: number | null;
   tier: Tier;
   created_at: string;
-}
+};
 
-export interface AvatarRow {
+export type AvatarRow = {
   id: string;
   user_id: string;
   image_url: string;
   is_active: boolean;
   created_at: string;
-}
+};
 
-export interface WardrobeItemRow {
+export type WardrobeItemRow = {
   id: string;
   user_id: string;
   image_url: string;
@@ -40,9 +44,9 @@ export interface WardrobeItemRow {
   formality: Formality;
   season: string[];
   created_at: string;
-}
+};
 
-export interface OutfitRow {
+export type OutfitRow = {
   id: string;
   user_id: string;
   item_ids: string[];
@@ -52,16 +56,16 @@ export interface OutfitRow {
   mood: string | null;
   is_saved: boolean;
   created_at: string;
-}
+};
 
-export interface SubscriptionRow {
+export type SubscriptionRow = {
   id: string;
   user_id: string;
   revenuecat_customer_id: string | null;
   status: string;
   expires_at: string | null;
   created_at: string;
-}
+};
 
 export interface Database {
   public: {
