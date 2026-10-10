@@ -44,6 +44,8 @@ export type WardrobeItemRow = {
   colors: string[];
   formality: Formality;
   season: string[];
+  fabric: string;
+  pattern: string;
   created_at: string;
 };
 
