@@ -1,4 +1,5 @@
-import { Linking, ScrollView, Text, View } from 'react-native';
+import { Link } from 'expo-router';
+import { Linking, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { WeatherWidget } from '@/components/home/WeatherWidget';
 import { MoodSelector } from '@/components/home/MoodSelector';
@@ -49,6 +50,16 @@ export default function HomeScreen() {
       <View className="mt-8">
         <SchedulePreview />
       </View>
+      <Link href="/outfit/new" asChild>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Generate today's outfits"
+          className="mb-8 mt-8 h-[52px] items-center justify-center rounded-full bg-primary px-6 shadow-md">
+          <Text className="text-headline text-white">
+            Generate today&apos;s outfits
+          </Text>
+        </Pressable>
+      </Link>
     </ScrollView>
   );
 }
