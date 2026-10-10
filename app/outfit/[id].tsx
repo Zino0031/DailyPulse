@@ -25,7 +25,7 @@ export default function OutfitDetailScreen() {
 
 function SavedOutfitView({ id }: { id: string }) {
   const { board, isLoading, isError } = useSavedOutfit(id);
-  const { unsave, saving } = useOutfit();
+  const { unsave, saving, ctx } = useOutfit();
 
   return (
     <ScrollView
@@ -41,7 +41,7 @@ function SavedOutfitView({ id }: { id: string }) {
       )}
       {!isLoading && !isError && board && (
         <>
-          <OutfitCard board={board} />
+          <OutfitCard board={board} ctx={ctx} />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Remove this outfit"
@@ -75,6 +75,7 @@ function GenerateFlow() {
     save,
     unsave,
     regenerate,
+    ctx,
   } = useOutfit();
   const [selected, setSelected] = useState(0);
   const hero = boards[Math.min(selected, boards.length - 1)];
@@ -86,6 +87,23 @@ function GenerateFlow() {
       <Text className="text-title-1 font-bold text-text">
         Today&apos;s outfits
       </Text>
+      <View className="flex-row gap-2">
+        <View className="rounded-full bg-surface px-3 py-1.5 shadow-sm">
+          <Text className="text-caption font-medium text-text-muted">
+            {Math.round(ctx.tempC)}°
+          </Text>
+        </View>
+        <View className="rounded-full bg-surface px-3 py-1.5 shadow-sm">
+          <Text className="text-caption font-medium text-text-muted">
+            {ctx.dress}
+          </Text>
+        </View>
+        <View className="rounded-full bg-surface px-3 py-1.5 shadow-sm">
+          <Text className="text-caption font-medium text-text-muted">
+            {ctx.mood}
+          </Text>
+        </View>
+      </View>
 
       {generating && <LoadingCard label={stage} />}
 
@@ -134,9 +152,12 @@ function GenerateFlow() {
 
       {!generating && hero && (
         <>
-          <OutfitCard board={hero} />
+          <OutfitCard board={hero} ctx={ctx} />
           {boards.length > 1 && (
-            <View className="flex-row gap-2">
+            <View
+              accessibilityRole="radiogroup"
+              accessibilityLabel="Preview options"
+              className="flex-row gap-1 rounded-full bg-border p-1">
               {boards.map((board, i) => (
                 <Pressable
                   key={board.key}
@@ -144,14 +165,12 @@ function GenerateFlow() {
                   accessibilityState={{ selected: i === selected }}
                   accessibilityLabel={`Preview option ${i + 1}`}
                   onPress={() => setSelected(i)}
-                  className={`flex-1 items-center rounded-xl border px-3 py-2.5 ${
-                    i === selected
-                      ? 'border-transparent bg-primary-tint'
-                      : 'border-border bg-surface'
+                  className={`flex-1 items-center rounded-full px-3 py-2 ${
+                    i === selected ? 'bg-surface shadow-sm' : ''
                   }`}>
                   <Text
                     className={`text-footnote font-medium ${
-                      i === selected ? 'text-primary' : 'text-text-muted'
+                      i === selected ? 'text-text' : 'text-text-muted'
                     }`}>
                     Option {i + 1}
                   </Text>
@@ -177,7 +196,7 @@ function GenerateFlow() {
                 accessibilityLabel="Save this outfit"
                 disabled={saving}
                 onPress={() => save(hero)}
-                className="h-12 items-center justify-center rounded-full bg-primary px-6">
+                className="h-[52px] items-center justify-center rounded-full bg-primary px-6">
                 <Text className="text-headline text-white">
                   {saving ? 'Saving…' : 'Save this look'}
                 </Text>

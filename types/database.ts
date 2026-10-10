@@ -24,6 +24,7 @@ export type UserRow = {
   location_lat: number | null;
   location_lon: number | null;
   tier: Tier;
+  gender: string;
   created_at: string;
 };
 

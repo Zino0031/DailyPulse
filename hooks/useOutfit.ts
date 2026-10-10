@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useDominantDressCode } from '@/hooks/useCalendarEvents';
+import { useProfile } from '@/hooks/useProfile';
 import { useUserPreferencesStore } from '@/store/useUserPreferencesStore';
 import { useWardrobe } from '@/hooks/useWardrobe';
 import { useWeather } from '@/hooks/useWeather';
 import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
+import type { WardrobeItemRow } from '@/types/database';
 import {
   checkAllowance,
   composeOutfits,
@@ -28,9 +30,79 @@ export interface SavedOutfit {
 }
 
 /**
+ * Remote AI pick with local fallback. Returns null when the function is
+ * undeployed/unreachable (offline preview keeps working); throws CAPPED
+ * when the server enforces the daily tier limit — callers must NOT fall
+ * back to local compose in that case.
+ */
+const CAPPED = Symbol('capped');
+const REMOTE_TIMEOUT_MS = 25000;
+
+async function remoteCompose(
+  ctx: OutfitContext,
+  items: WardrobeItemRow[],
+  excludeTopIds: string[],
+): Promise<OutfitBoard[] | null> {
+  if (!isSupabaseConfigured()) return null;
+  const supabase = getSupabase();
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) return null;
+  const call = supabase.functions.invoke<{
+    outfitId: string;
+    itemIds: string[];
+    reasoning: string[];
+    capped?: boolean;
+  }>('generate-outfit', {
+    body: {
+      weather: { tempC: ctx.tempC, rainPct: ctx.rainPct },
+      dress: ctx.dress,
+      mood: ctx.mood,
+      gender: ctx.gender,
+      excludeTopIds,
+    },
+  });
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('timeout')), REMOTE_TIMEOUT_MS),
+  );
+  let result: Awaited<typeof call>;
+  try {
+    result = await Promise.race([call, timeout]);
+  } catch {
+    return null;
+  }
+  if (result.error) {
+    const status = (result.error as { status?: number }).status;
+    if (status === 429 || result.data?.capped) throw CAPPED;
+    return null;
+  }
+  const picks = result.data;
+  if (!picks?.itemIds?.length) return null;
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const [top, bottom, shoes, ...rest] = picks.itemIds
+    .map((id) => byId.get(id))
+    .filter((i): i is WardrobeItemRow => Boolean(i));
+  if (!top || !bottom || !shoes) return null;
+  return [
+    {
+      key: `ai-${picks.outfitId}`,
+      top,
+      bottom,
+      shoes,
+      outerwear:
+        rest.find((i) => i.category === 'outerwear') ?? null,
+      accessory:
+        rest.find((i) => i.category === 'accessory') ?? null,
+      score: 0,
+      reasons: picks.reasoning.slice(0, 4),
+      source: 'ai',
+    },
+  ];
+}
+
+/**
  * Generate → preview → save/unsave → regenerate flow for the outfit route.
- * Local composer now; the generate-outfit edge function (#14) slots into
- * runGeneration() when it lands — screen code doesn't change.
+ * AI edge function first (#14), on-device composer as fallback — screen
+ * code doesn't care which produced the boards.
  */
 export function useOutfit() {
   const {
@@ -42,12 +114,16 @@ export function useOutfit() {
   const { data: weather } = useWeather();
   const mood = useUserPreferencesStore((s) => s.mood) ?? 'neutral';
   const dress = useDominantDressCode() ?? 'casual';
+  const { data: profile } = useProfile();
 
   const [runId, setRunId] = useState(0);
   const [stage, setStage] = useState(0);
   const [allowance, setAllowance] = useState<Allowance | null>(null);
   const [saved, setSaved] = useState<SavedOutfit | null>(null);
   const [saving, setSaving] = useState(false);
+  const [boards, setBoards] = useState<OutfitBoard[]>([]);
+  const [boardsPending, setBoardsPending] = useState(true);
+  const seenTops = useRef<string[]>([]);
 
   const ctx: OutfitContext = useMemo(
     () => ({
@@ -55,8 +131,9 @@ export function useOutfit() {
       rainPct: weather?.today.precipitationProbabilityMaxPct ?? 0,
       dress,
       mood,
+      gender: profile?.gender ?? 'prefer_not_to_say',
     }),
-    [weather, dress, mood],
+    [weather, dress, mood, profile],
   );
 
   // Staged progress UI with a minimum dwell per stage (NFR feel target).
@@ -74,12 +151,48 @@ export function useOutfit() {
     checkAllowance().then(setAllowance);
   }, [runId]);
 
-  const boards: OutfitBoard[] = useMemo(() => {
-    if (wardrobeLoading || items.length === 0) return [];
-    return composeOutfits(items, ctx, runId);
-  }, [wardrobeLoading, items, ctx, runId]);
+  // AI first, local composer as fallback. Runs per generation; the staged
+  // progress UI keeps covering while either path resolves.
+  useEffect(() => {
+    if (wardrobeLoading || items.length === 0) {
+      setBoards([]);
+      setBoardsPending(wardrobeLoading);
+      return;
+    }
+    let cancelled = false;
+    setBoardsPending(true);
+    (async () => {
+      try {
+        const remote = await remoteCompose(ctx, items, seenTops.current);
+        if (cancelled) return;
+        if (remote && remote.length > 0) {
+          seenTops.current = [...seenTops.current, remote[0].top.id].slice(-6);
+          setBoards(remote);
+        } else {
+          setBoards(composeOutfits(items, ctx, runId));
+        }
+      } catch (e) {
+        if (cancelled) return;
+        if (e === CAPPED) {
+          setAllowance((prev) =>
+            prev ? { ...prev, allowed: false, remaining: 0 } : prev,
+          );
+          setBoards([]);
+        } else {
+          setBoards(composeOutfits(items, ctx, runId));
+        }
+      } finally {
+        if (!cancelled) setBoardsPending(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId, wardrobeLoading, items.length]);
 
-  const generating = wardrobeLoading || stage < GENERATION_STAGES.length - 1;
+  const generating =
+    wardrobeLoading || boardsPending || stage < GENERATION_STAGES.length - 1;
   const emptyCloset = !wardrobeLoading && items.length === 0;
   const capped = allowance !== null && !allowance.allowed;
 
@@ -202,6 +315,7 @@ export function useSavedOutfit(id: string | undefined) {
               row.event_summary ? `${row.event_summary} dress code` : 'Saved look',
               ...(row.mood ? [`${row.mood} mood`] : []),
             ],
+            source: 'local',
           });
         }
       } catch {

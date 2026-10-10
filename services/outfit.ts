@@ -11,6 +11,8 @@ export interface OutfitContext {
   rainPct: number;
   dress: DressCode;
   mood: Mood;
+  /** Wearer pronouns for cuts/fits; prefer_not_to_say = ungendered. */
+  gender: string;
 }
 
 export interface OutfitBoard {
@@ -22,6 +24,8 @@ export interface OutfitBoard {
   accessory: WardrobeItemRow | null;
   score: number;
   reasons: string[];
+  /** Which engine styled it — shown as a badge for honesty. */
+  source: 'local' | 'ai';
 }
 
 export interface Allowance {
@@ -167,6 +171,7 @@ function buildBoard(
     accessory,
     score,
     reasons: [...new Set(reasons)].slice(0, 4),
+    source: 'local',
   };
 }
 

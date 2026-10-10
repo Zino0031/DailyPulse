@@ -14,5 +14,8 @@
     ".expo/types/**/*.ts",
     "expo-env.d.ts",
     "nativewind-env.d.ts"
-  ]
+  ],
+  // Edge functions run on Deno and deploy via `supabase functions deploy`
+  // (see supabase/README.md) — the app compiler must skip them.
+  "exclude": ["supabase/functions/**/*", "node_modules"]
 }
