@@ -18,7 +18,10 @@ import {
 // Welcome lives at /welcome inside the (auth) group — typed-routes won't
 // know about it until the next `expo start`, so we cast when navigating.
 import * as SplashScreen from 'expo-splash-screen';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
+import { QueryClient } from '@tanstack/react-query';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { useEffect, type ReactNode } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -47,6 +50,14 @@ const queryClient = new QueryClient({
   },
 });
 
+// Offline-readable cache (PRD §4): only the closet is persisted — weather
+// and calendar are cheap to refetch and go stale fast.
+const persister = createAsyncStoragePersister({
+  storage: AsyncStorage,
+  key: 'myoutfit-query-cache',
+});
+const PERSIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
@@ -64,7 +75,18 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <QueryClientProvider client={queryClient}>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{
+          persister,
+          maxAge: PERSIST_MAX_AGE_MS,
+          // Bump when the persisted ClosetItem shape changes.
+          buster: 'closet-v1',
+          dehydrateOptions: {
+            shouldDehydrateQuery: (query) =>
+              query.queryKey[0] === 'closet' && query.state.status === 'success',
+          },
+        }}>
         <ThemeProvider
           value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
           <BootGate fontsLoaded={fontsLoaded}>
@@ -76,11 +98,19 @@ export default function RootLayout() {
                 options={{ headerShown: false }}
               />
               <Stack.Screen name="outfit" options={{ headerShown: false }} />
+              <Stack.Screen
+                name="item/new"
+                options={{ presentation: 'modal', title: 'New item' }}
+              />
+              <Stack.Screen
+                name="item/[id]"
+                options={{ presentation: 'modal', title: 'Edit item' }}
+              />
               <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
             </Stack>
           </BootGate>
         </ThemeProvider>
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </SafeAreaProvider>
   );
 }

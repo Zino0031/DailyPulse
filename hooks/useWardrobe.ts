@@ -1,31 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
-
-import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
-import type { WardrobeItemRow } from '@/types/database';
+import { useClosetItems } from '@/hooks/useCloset';
 
 /**
- * Read-only wardrobe feed for the composer. Epic 3 (closet CRUD) builds
- * the write side on top of this same table.
+ * Read-only wardrobe feed for the composer. Shares the Closet tab's query
+ * (one fetch, one offline cache), so adding, editing or deleting an item in
+ * the closet is reflected in outfit suggestions right away. Items carry a
+ * signed `imageUri` — `image_url` is a private storage path.
  */
 export function useWardrobe() {
-  return useQuery({
-    queryKey: ['wardrobe-items'],
-    queryFn: async (): Promise<WardrobeItemRow[]> => {
-      if (!isSupabaseConfigured()) return [];
-      const supabase = getSupabase();
-      const { data } = await supabase.auth.getUser();
-      const user = data.user;
-      if (!user) return [];
-      const { data: items, error } = await supabase
-        .from('wardrobe_items')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return items;
-    },
-    staleTime: 2 * 60 * 1000,
-    retry: 1,
-    refetchOnWindowFocus: false,
-  });
+  return useClosetItems();
 }
