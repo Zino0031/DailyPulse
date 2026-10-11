@@ -8,7 +8,11 @@ import {
   type TagSuggestion,
 } from '@/supabase/functions/_shared/wardrobeTags';
 
-/** Client-side ceiling; the function runs two budgeted model attempts. */
+/**
+ * Client-side ceiling. Must stay above tag-item's TAG_BUDGET_MS (45s) plus
+ * download overhead, so a slow model surfaces as the function's readable
+ * 504 ("took too long") rather than a generic client timeout.
+ */
 const TAG_TIMEOUT_MS = 55_000;
 
 /**

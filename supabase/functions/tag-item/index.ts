@@ -1,6 +1,6 @@
 // tag-item — Epic 3 vision auto-tagging (#9).
 // POST { imagePath } (private `wardrobe` bucket path, e.g. userId/tmp/x.jpg)
-//   200 -> { category, colors, formality, season, fabric, pattern }
+//   200 -> { category, colors, formality, season, fabric, pattern, face }
 //   4xx/5xx -> { error } — a short, human-readable message
 //
 // Gemini Flash (free tier, same key as the picker — no new secret):
@@ -27,14 +27,16 @@ import {
   parseTagSuggestion,
 } from '../_shared/wardrobeTags.ts';
 
-const DEFAULT_MODEL = 'gemini-3.5-flash';
-// Lite first when available (fast, generous free quota), full model as the
-// fallback. Unknown IDs 404 out harmlessly via the 4xx break below.
-const TAG_MODELS = ['gemini-3.5-flash', DEFAULT_MODEL];
-const TAG_ATTEMPT_MS = 25_000;
+// Ordered fallback chain (GEMINI_MODEL overrides it). A 404 — model retired
+// or unknown — moves on to the next entry.
+const TAG_MODELS = ['gemini-3.5-flash'];
 const TAG_MAX_TRIES = 2;
-// PRD NFR: tagging < 3s p95. Two budgeted attempts keep the worst case near
-// the client timeout; the client falls back to manual tagging on 504.
+const TAG_ATTEMPT_MS = 25_000;
+// PRD NFR: tagging < 3s p95. Every attempt shares one deadline that ends
+// before the client gives up (services/ai.ts, 55s), so a slow model always
+// surfaces as a 504 the app can explain, never as a client-side timeout.
+const TAG_BUDGET_MS = 45_000;
+const RETRY_DELAY_MS = 1_000;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 const corsHeaders = {
@@ -49,7 +51,7 @@ const TAG_PROMPT = `Describe the single clothing item in this photo for a wardro
 - season: every season the item is comfortable in.
 - fabric: best guess from look and drape; omit if unsure.
 - pattern: the dominant surface pattern; omit if unsure.
-- face: if a person's face is visible, its bounding box as 0-1000 normalized {x, y, w, h} (top-left origin); omit entirely when no face is visible.`;
+- face_box_2d: if a person's face is visible, its bounding box as [ymin, xmin, ymax, xmax] normalized to 0-1000; omit entirely when no face is visible.`;
 
 // Structured output: Gemini can only answer with these enums.
 const RESPONSE_SCHEMA = {
@@ -65,17 +67,15 @@ const RESPONSE_SCHEMA = {
     season: { type: 'ARRAY', items: { type: 'STRING', enum: [...SEASONS] } },
     fabric: { type: 'STRING', enum: [...FABRICS] },
     pattern: { type: 'STRING', enum: [...PATTERNS] },
-    face: {
-      type: 'OBJECT',
-      properties: {
-        x: { type: 'NUMBER' },
-        y: { type: 'NUMBER' },
-        w: { type: 'NUMBER' },
-        h: { type: 'NUMBER' },
-      },
+    // Gemini's native detection format; the shared validator converts it.
+    face_box_2d: {
+      type: 'ARRAY',
+      items: { type: 'NUMBER' },
+      minItems: 4,
+      maxItems: 4,
     },
   },
-  // fabric/pattern optional: omitted when unsure, returned to clients as ''.
+  // fabric/pattern/face optional: omitted when unsure / absent.
   required: ['category', 'colors', 'formality', 'season'],
 };
 
@@ -150,71 +150,72 @@ Deno.serve(async (req) => {
     const override = Deno.env.get('GEMINI_MODEL');
     const models = override ? [override] : TAG_MODELS;
     const started = Date.now();
+    const body = JSON.stringify({
+      contents: [
+        {
+          parts: [
+            { text: TAG_PROMPT },
+            { inlineData: { mimeType: blob.type || 'image/jpeg', data: b64 } },
+          ],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: RESPONSE_SCHEMA,
+        temperature: 0.2,
+      },
+    });
+
     let res: Response | null = null;
-    let lastError = '';
     let usedModel = models[0];
-      for (const model of models) {
+    // Status to answer with if every attempt fails, and why (for the log).
+    let failStatus = 502;
+    let lastError = '';
+    chain: for (const model of models) {
       for (let attemptNo = 1; attemptNo <= TAG_MAX_TRIES; attemptNo++) {
+        const remaining = TAG_BUDGET_MS - (Date.now() - started);
+        if (remaining <= 0) {
+          failStatus = 504;
+          break chain;
+        }
         try {
           const attempt = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
             {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-goog-api-key': geminiKey,
-              },
-              body: JSON.stringify({
-                contents: [
-                  {
-                    parts: [
-                      { text: TAG_PROMPT },
-                      { inlineData: { mimeType: blob.type || 'image/jpeg', data: b64 } },
-                    ],
-                  },
-                ],
-                generationConfig: {
-                  responseMimeType: 'application/json',
-                  responseSchema: RESPONSE_SCHEMA,
-                  temperature: 0.2,
-                },
-              }),
-              signal: AbortSignal.timeout(TAG_ATTEMPT_MS),
+              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiKey },
+              body,
+              signal: AbortSignal.timeout(Math.min(TAG_ATTEMPT_MS, remaining)),
             },
           );
-          if (!attempt.ok) {
-            const detail = await attempt.text().catch(() => '');
-            console.error('[tag-item] model error', model, attempt.status, detail.slice(0, 200));
-            lastError = `${model} ${attempt.status}`;
-            // 4xx (except 429) won't heal on retry — stop, don't burn quota.
-            if (attempt.status !== 429 && attempt.status < 500) break;
-            continue;
+          if (attempt.ok) {
+            res = attempt;
+            usedModel = model;
+            break chain;
           }
-          res = attempt;
-          usedModel = model;
-          break;
+          const detail = await attempt.text().catch(() => '');
+          lastError = `${model} ${attempt.status} ${detail.slice(0, 200)}`;
+          console.error('[tag-item] model error', lastError);
+          failStatus = attempt.status === 429 ? 429 : 502;
+          // Unknown/retired model: try the next one.
+          if (attempt.status === 404) continue chain;
+          // Bad request, key or permissions: no model or retry will fix it.
+          if (attempt.status !== 429 && attempt.status < 500) break chain;
         } catch (e) {
           const timedOut = e instanceof DOMException && e.name === 'TimeoutError';
-          console.error('[tag-item] model timeout', model);
-          lastError = `${model} >${TAG_ATTEMPT_MS}ms`;
-          if (!timedOut) {
-            return fail(502, 'tagging unavailable, fill in manually', String(e));
-          }
+          lastError = timedOut ? `${model} timed out` : `${model} ${String(e).slice(0, 200)}`;
+          console.error('[tag-item] model transport error', lastError);
+          failStatus = timedOut ? 504 : 502;
+        }
+        if (attemptNo < TAG_MAX_TRIES) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attemptNo));
         }
       }
     }
     if (!res) {
-      const timedOut = lastError.includes('>');
-      return timedOut
-        ? fail(504, 'tagging took too long, fill in manually', lastError)
-        : fail(502, 'tagging unavailable, fill in manually', lastError);
-    }
-
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      return res.status === 429
-        ? fail(429, 'tagging is busy, try again in a minute', detail.slice(0, 300))
-        : fail(502, 'tagging unavailable, fill in manually', `${res.status} ${detail.slice(0, 300)}`);
+      if (failStatus === 504) return fail(504, 'tagging took too long, fill in manually', lastError);
+      if (failStatus === 429) return fail(429, 'tagging is busy, try again in a minute', lastError);
+      return fail(502, 'tagging unavailable, fill in manually', lastError);
     }
 
     const data = await res.json().catch(() => null);
