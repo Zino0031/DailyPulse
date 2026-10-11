@@ -62,6 +62,17 @@ export type ColorTag = (typeof COLORS)[number];
 export type Fabric = (typeof FABRICS)[number];
 export type Pattern = (typeof PATTERNS)[number];
 
+/**
+ * Normalized 0–1000 face box for privacy cropping (top-left origin).
+ * Null when no visible face — the photo is stored untouched.
+ */
+export interface FaceBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface TagSuggestion {
   category: Category;
   colors: ColorTag[];
@@ -70,6 +81,8 @@ export interface TagSuggestion {
   /** '' when the model can't tell — never a guess. */
   fabric: Fabric | '';
   pattern: Pattern | '';
+  /** Face to crop for privacy; null = store the photo as-is. */
+  face: FaceBox | null;
 }
 
 /** Upper bound so a chatty model can't flood the color chips. */
@@ -100,6 +113,25 @@ function pickMany<T extends string>(list: readonly T[], value: unknown): T[] {
 function pickOptional<T extends string>(list: readonly T[], value: unknown): T | '' {
   const item = normalize(value);
   return isMember(list, item) ? item : '';
+}
+
+function pickFace(value: unknown): FaceBox | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const raw = value as Record<string, unknown>;
+  const num = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v)
+      ? Math.max(0, Math.min(1000, v))
+      : null;
+  const x = num(raw.x);
+  const y = num(raw.y);
+  const w = num(raw.w);
+  const h = num(raw.h);
+  if (x === null || y === null || w === null || h === null || w <= 0 || h <= 0) {
+    return null;
+  }
+  return { x, y, w, h };
 }
 
 /**
@@ -135,6 +167,7 @@ export function parseTagSuggestion(input: unknown): TagSuggestion | null {
     season: pickMany(SEASONS, raw.season ?? raw.seasons),
     fabric: pickOptional(FABRICS, raw.fabric),
     pattern: pickOptional(PATTERNS, raw.pattern),
+    face: pickFace(raw.face ?? raw.faceBox),
   };
 }
 

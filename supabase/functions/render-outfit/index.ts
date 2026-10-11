@@ -37,26 +37,57 @@ const CF_KLEIN_MODEL = '@cf/black-forest-labs/flux-2-klein-4b';
 
 /** Shrink public (query-less) URLs under klein's 512px input limit. */
 function kleinSrc(url: string): string {
+  if (!/^https?:\/\//i.test(url)) return url;
   if (url.includes('?')) return url;
   return `https://images.weserv.nl/?url=${url.replace(/^https?:\/\//, '')}&w=400&output=jpg`;
 }
 
-async function downloadBytes(url: string): Promise<{ bytes: ArrayBuffer; mime: string } | null> {
+interface RefBytes {
+  bytes: ArrayBuffer;
+  mime: string;
+}
+
+interface BucketAdmin {
+  storage: {
+    from: (bucket: string) => {
+      download: (
+        path: string,
+      ) => Promise<{ data: Blob | null; error: { message: string } | null }>;
+    };
+  };
+}
+
+/**
+ * Garment photos arrive either as http(s) URLs (seed data, signed URLs)
+ * or as private-bucket paths (real uploads) — resolve both server-side
+ * with the service role so renders never depend on client-side signing.
+ */
+async function resolveBytes(
+  admin: BucketAdmin,
+  imageRef: string,
+): Promise<RefBytes | null> {
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'DailyPulse-render/1.0' },
-      redirect: 'follow',
-    });
-    if (!res.ok) {
-      console.error('[render-outfit] ref download status', res.status, url.slice(0, 90));
+    if (/^https?:\/\//i.test(imageRef)) {
+      const res = await fetch(imageRef, {
+        headers: { 'User-Agent': 'DailyPulse-render/1.0' },
+      });
+      if (!res.ok) {
+        console.error('[render-outfit] ref download status', res.status, imageRef.slice(0, 90));
+        return null;
+      }
+      return {
+        bytes: await res.arrayBuffer(),
+        mime: res.headers.get('content-type')?.split(';')[0] || 'image/jpeg',
+      };
+    }
+    const { data, error } = await admin.storage.from('wardrobe').download(imageRef);
+    if (error || !data) {
+      console.error('[render-outfit] bucket download failed', error?.message, imageRef.slice(0, 90));
       return null;
     }
-    return {
-      bytes: await res.arrayBuffer(),
-      mime: res.headers.get('content-type')?.split(';')[0] || 'image/jpeg',
-    };
+    return { bytes: await data.arrayBuffer(), mime: data.type || 'image/jpeg' };
   } catch (e) {
-    console.error('[render-outfit] ref download error', String(e).slice(0, 160), url.slice(0, 90));
+    console.error('[render-outfit] ref download error', String(e).slice(0, 160));
     return null;
   }
 }
@@ -71,6 +102,10 @@ async function renderViaKlein(
   items: RenderItem[],
   ctx: RenderCtx,
 ): Promise<ArrayBuffer | null> {
+  const admin = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+  );
   const refs: { bytes: ArrayBuffer; mime: string; label: string }[] = [];
   console.log(
     '[render-outfit] klein input items:',
@@ -78,7 +113,11 @@ async function renderViaKlein(
   );
   for (const item of items.slice(0, 4)) {
     if (!item.image_url) continue;
-    const dl = await downloadBytes(kleinSrc(item.image_url));
+    // Private-bucket paths resolve via service role; public URLs go
+    // through the shrink proxy to respect klein's 512px input limit.
+    const dl = /^https?:\/\//i.test(item.image_url)
+      ? await resolveBytes(admin, kleinSrc(item.image_url))
+      : await resolveBytes(admin, item.image_url);
     if (dl) {
       refs.push({
         ...dl,
@@ -91,8 +130,10 @@ async function renderViaKlein(
   const light =
     ctx.tempC >= 20 ? 'bright daylight' : ctx.tempC >= 10 ? 'soft daylight' : 'overcast daylight';
   const garmentRefs = refs.map((r, i) => `image ${i} (${r.label})`).join(', ');
+  // Mannequin framing (not a person) to stay clear of safety filters while
+  // keeping the full outfit visible head to shoes.
   const prompt =
-    `Full-body vector illustration, entire person visible head to shoes in frame, faceless person with blank face, standing in a cozy bedroom with an open wardrobe closet behind, dress the person in ${garmentRefs}, ${ctx.mood} mood styling, ${ctx.dress} dress code, ${light} from a window, flat colors, clean vector shapes, no photo, no realism, no cropped body`;
+    `Full-body vector fashion illustration on a faceless tailor's mannequin, entire figure visible head to shoes in frame, standing in a cozy bedroom with an open wardrobe closet full of clothes behind, mannequin dressed in ${garmentRefs}, ${ctx.mood} mood styling, ${ctx.dress} dress code, ${light} from a window, flat colors, clean vector shapes, no photo, no realism, no cropped body, no real people`;
   try {
     const form = new FormData();
     form.append('prompt', prompt);

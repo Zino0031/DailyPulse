@@ -13,6 +13,17 @@ const SIGNED_URL_TTL_S = 60 * 60 * 24 * 7;
 /** Long edge after resize: sharp on a 3-column grid, fast to upload + tag. */
 const MAX_EDGE_PX = 1080;
 
+/** Pixel dims a photo will have after the upload downscale (pure math). */
+export function fittedDims(
+  width: number,
+  height: number,
+): { width: number; height: number } {
+  if (width <= 0 || height <= 0) return { width, height };
+  if (Math.max(width, height) <= MAX_EDGE_PX) return { width, height };
+  const scale = MAX_EDGE_PX / Math.max(width, height);
+  return { width: Math.round(width * scale), height: Math.round(height * scale) };
+}
+
 export type ItemTags = Pick<
   WardrobeItemRow,
   'category' | 'colors' | 'formality' | 'season' | 'fabric' | 'pattern'
@@ -74,9 +85,12 @@ export async function uploadClosetPhoto(
   photo: LocalPhoto,
 ): Promise<string> {
   const context = ImageManipulator.manipulate(photo.uri);
-  if (Math.max(photo.width, photo.height) > MAX_EDGE_PX) {
+  const fitted = fittedDims(photo.width, photo.height);
+  if (fitted.width !== photo.width || fitted.height !== photo.height) {
     context.resize(
-      photo.width >= photo.height ? { width: MAX_EDGE_PX } : { height: MAX_EDGE_PX },
+      photo.width >= photo.height
+        ? { width: fitted.width }
+        : { height: fitted.height },
     );
   }
   const image = await context.renderAsync();
@@ -89,6 +103,51 @@ export async function uploadClosetPhoto(
     .upload(path, body, { contentType: 'image/jpeg', upsert: false });
   if (error) throw error;
   return path;
+}
+
+/** Face box + the pixel dims of the file it was detected in. */
+export interface FaceCrop {
+  box: { x: number; y: number; w: number; h: number };
+  fileWidth: number;
+  fileHeight: number;
+}
+
+/**
+ * Crops a detected face out of a local photo and returns the cropped file
+ * URI, or `null` when cropping isn't sensible (face outside the top band,
+ * or too little garment would remain). Top-third faces are the clothing
+ * flat-lay/selfie case: everything below the face is kept.
+ */
+export async function cropFaceFromPhoto(
+  localUri: string,
+  face: FaceCrop['box'],
+  fileWidth: number,
+  fileHeight: number,
+): Promise<string | null> {
+  if (fileWidth <= 0 || fileHeight <= 0) return null;
+  const bottomPx = ((face.y + face.h) / 1000) * fileHeight;
+  const marginPx = 0.02 * fileHeight;
+  const originY = Math.min(fileHeight - 1, Math.floor(bottomPx + marginPx));
+  const height = fileHeight - originY;
+  // Only crop faces sitting in the top band with plenty of garment left.
+  if (bottomPx > 0.45 * fileHeight || height < 0.4 * fileHeight) return null;
+  const image = await ImageManipulator.manipulate(localUri)
+    .crop({ originX: 0, originY, width: fileWidth, height })
+    .renderAsync();
+  const saved = await image.saveAsync({ compress: 0.8, format: SaveFormat.JPEG });
+  return saved.uri;
+}
+
+/**
+ * Replaces an uploaded draft photo in place (same path, no orphans) —
+ * used after face-cropping the local file post-tagging.
+ */
+export async function replaceClosetPhoto(path: string, localUri: string): Promise<void> {
+  const body = await (await fetch(localUri)).arrayBuffer();
+  const { error } = await getSupabase()
+    .storage.from(BUCKET)
+    .upload(path, body, { contentType: 'image/jpeg', upsert: true });
+  if (error) throw error;
 }
 
 /** Best-effort cleanup (abandoned drafts, deleted items). Never throws. */

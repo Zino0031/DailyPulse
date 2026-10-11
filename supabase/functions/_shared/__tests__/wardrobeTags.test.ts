@@ -8,6 +8,7 @@ describe('parseTagSuggestion', () => {
     season: ['spring', 'autumn'],
     fabric: 'cotton',
     pattern: 'striped',
+    face: null,
   };
 
   it('accepts a well-formed object', () => {
@@ -33,6 +34,7 @@ describe('parseTagSuggestion', () => {
       season: ['winter'],
       fabric: '',
       pattern: '',
+      face: null,
     });
   });
 
@@ -93,6 +95,31 @@ describe('parseTagSuggestion', () => {
 
   it('never stores placeholder colors like "unknown"', () => {
     expect(parseTagSuggestion({ ...valid, colors: ['unknown'] })?.colors).toEqual([]);
+  });
+
+  describe('face', () => {
+    it('accepts a valid normalized box', () => {
+      expect(
+        parseTagSuggestion({ ...valid, face: { x: 100, y: 50, w: 200, h: 250 } })?.face,
+      ).toEqual({ x: 100, y: 50, w: 200, h: 250 });
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['null', null],
+      ['a string', 'no face'],
+      ['zero width', { x: 1, y: 1, w: 0, h: 5 }],
+      ['NaN', { x: NaN, y: 1, w: 2, h: 3 }],
+      ['an array', [1, 2, 3, 4]],
+    ])('returns null for %s', (_label, face) => {
+      expect(parseTagSuggestion({ ...valid, face })?.face).toBeNull();
+    });
+
+    it('clamps out-of-range coordinates', () => {
+      expect(
+        parseTagSuggestion({ ...valid, face: { x: -5, y: 10, w: 2000, h: 50 } })?.face,
+      ).toEqual({ x: 0, y: 10, w: 1000, h: 50 });
+    });
   });
 });
 

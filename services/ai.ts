@@ -8,8 +8,8 @@ import {
   type TagSuggestion,
 } from '@/supabase/functions/_shared/wardrobeTags';
 
-/** Client-side ceiling; the function itself aborts Gemini at 10s. */
-const TAG_TIMEOUT_MS = 15_000;
+/** Client-side ceiling; the function runs two budgeted model attempts. */
+const TAG_TIMEOUT_MS = 55_000;
 
 /**
  * Asks `tag-item` for suggested tags for an uploaded closet photo.

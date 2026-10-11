@@ -27,10 +27,14 @@ import {
   parseTagSuggestion,
 } from '../_shared/wardrobeTags.ts';
 
-const DEFAULT_MODEL = 'gemini-3.8-flash';
-// PRD NFR: tagging < 3s p95. Stop well before a user would think the app
-// hung; the client falls back to manual tagging on 504.
-const TAG_TIMEOUT_MS = 10_000;
+const DEFAULT_MODEL = 'gemini-3.5-flash';
+// Lite first when available (fast, generous free quota), full model as the
+// fallback. Unknown IDs 404 out harmlessly via the 4xx break below.
+const TAG_MODELS = ['gemini-3.5-flash', DEFAULT_MODEL];
+const TAG_ATTEMPT_MS = 25_000;
+const TAG_MAX_TRIES = 2;
+// PRD NFR: tagging < 3s p95. Two budgeted attempts keep the worst case near
+// the client timeout; the client falls back to manual tagging on 504.
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 const corsHeaders = {
@@ -44,7 +48,8 @@ const TAG_PROMPT = `Describe the single clothing item in this photo for a wardro
 - formality: base it on cut and fabric (t-shirt/jeans/sneakers = casual; shirt/trousers/loafers = business; suit/gown = formal; leggings/jersey = athletic).
 - season: every season the item is comfortable in.
 - fabric: best guess from look and drape; omit if unsure.
-- pattern: the dominant surface pattern; omit if unsure.`;
+- pattern: the dominant surface pattern; omit if unsure.
+- face: if a person's face is visible, its bounding box as 0-1000 normalized {x, y, w, h} (top-left origin); omit entirely when no face is visible.`;
 
 // Structured output: Gemini can only answer with these enums.
 const RESPONSE_SCHEMA = {
@@ -60,6 +65,15 @@ const RESPONSE_SCHEMA = {
     season: { type: 'ARRAY', items: { type: 'STRING', enum: [...SEASONS] } },
     fabric: { type: 'STRING', enum: [...FABRICS] },
     pattern: { type: 'STRING', enum: [...PATTERNS] },
+    face: {
+      type: 'OBJECT',
+      properties: {
+        x: { type: 'NUMBER' },
+        y: { type: 'NUMBER' },
+        w: { type: 'NUMBER' },
+        h: { type: 'NUMBER' },
+      },
+    },
   },
   // fabric/pattern optional: omitted when unsure, returned to clients as ''.
   required: ['category', 'colors', 'formality', 'season'],
@@ -122,7 +136,6 @@ Deno.serve(async (req) => {
 
     const geminiKey = Deno.env.get('GEMINI_API_KEY');
     if (!geminiKey) return fail(503, 'tagging unavailable, fill in manually', 'GEMINI_API_KEY not set');
-    const model = Deno.env.get('GEMINI_MODEL') || DEFAULT_MODEL;
 
     const bin = new Uint8Array(bytes);
     // Single btoa at the end: per-chunk encoding would break 3-byte
@@ -134,40 +147,67 @@ Deno.serve(async (req) => {
     }
     const b64 = btoa(binary);
 
+    const override = Deno.env.get('GEMINI_MODEL');
+    const models = override ? [override] : TAG_MODELS;
     const started = Date.now();
-    let res: Response;
-    try {
-      res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': geminiKey,
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: TAG_PROMPT },
-                  { inlineData: { mimeType: blob.type || 'image/jpeg', data: b64 } },
-                ],
+    let res: Response | null = null;
+    let lastError = '';
+    let usedModel = models[0];
+      for (const model of models) {
+      for (let attemptNo = 1; attemptNo <= TAG_MAX_TRIES; attemptNo++) {
+        try {
+          const attempt = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': geminiKey,
               },
-            ],
-            generationConfig: {
-              responseMimeType: 'application/json',
-              responseSchema: RESPONSE_SCHEMA,
-              temperature: 0.2,
+              body: JSON.stringify({
+                contents: [
+                  {
+                    parts: [
+                      { text: TAG_PROMPT },
+                      { inlineData: { mimeType: blob.type || 'image/jpeg', data: b64 } },
+                    ],
+                  },
+                ],
+                generationConfig: {
+                  responseMimeType: 'application/json',
+                  responseSchema: RESPONSE_SCHEMA,
+                  temperature: 0.2,
+                },
+              }),
+              signal: AbortSignal.timeout(TAG_ATTEMPT_MS),
             },
-          }),
-          signal: AbortSignal.timeout(TAG_TIMEOUT_MS),
-        },
-      );
-    } catch (e) {
-      const timedOut = e instanceof DOMException && e.name === 'TimeoutError';
+          );
+          if (!attempt.ok) {
+            const detail = await attempt.text().catch(() => '');
+            console.error('[tag-item] model error', model, attempt.status, detail.slice(0, 200));
+            lastError = `${model} ${attempt.status}`;
+            // 4xx (except 429) won't heal on retry — stop, don't burn quota.
+            if (attempt.status !== 429 && attempt.status < 500) break;
+            continue;
+          }
+          res = attempt;
+          usedModel = model;
+          break;
+        } catch (e) {
+          const timedOut = e instanceof DOMException && e.name === 'TimeoutError';
+          console.error('[tag-item] model timeout', model);
+          lastError = `${model} >${TAG_ATTEMPT_MS}ms`;
+          if (!timedOut) {
+            return fail(502, 'tagging unavailable, fill in manually', String(e));
+          }
+        }
+      }
+    }
+    if (!res) {
+      const timedOut = lastError.includes('>');
       return timedOut
-        ? fail(504, 'tagging took too long, fill in manually', `${model} >${TAG_TIMEOUT_MS}ms`)
-        : fail(502, 'tagging unavailable, fill in manually', String(e));
+        ? fail(504, 'tagging took too long, fill in manually', lastError)
+        : fail(502, 'tagging unavailable, fill in manually', lastError);
     }
 
     if (!res.ok) {
@@ -183,7 +223,7 @@ Deno.serve(async (req) => {
     if (!tags) {
       return fail(422, 'tagging unclear, fill in manually', String(text).slice(0, 300));
     }
-    console.log('[tag-item] ok', JSON.stringify({ model, ms: Date.now() - started }));
+    console.log('[tag-item] ok', JSON.stringify({ model: usedModel, ms: Date.now() - started }));
     return json(tags);
   } catch (e) {
     return fail(500, 'something went wrong', e instanceof Error ? e.message : String(e));

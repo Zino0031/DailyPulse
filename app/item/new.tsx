@@ -14,6 +14,11 @@ import {
 } from '@/hooks/useCloset';
 import { useDiscardGuard } from '@/hooks/useDiscardGuard';
 import type { LocalPhoto } from '@/services/closet';
+import {
+  cropFaceFromPhoto,
+  fittedDims,
+  replaceClosetPhoto,
+} from '@/services/closet';
 import type { TagSuggestion } from '@/supabase/functions/_shared/wardrobeTags';
 import { EMPTY_TAGS, tagsEqual, type EditableTags } from '@/utils/closet';
 import { friendlyError } from '@/utils/errors';
@@ -37,6 +42,7 @@ export default function NewItemScreen() {
 
   const [tags, setTags] = useState<EditableTags>(EMPTY_TAGS);
   const [suggestion, setSuggestion] = useState<TagSuggestion | null>(null);
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [triedSave, setTriedSave] = useState(false);
   const touched = useRef(new Set<Field>());
   const imagePath = useRef<string | null>(null);
@@ -52,7 +58,7 @@ export default function NewItemScreen() {
   const runTagger = useCallback(
     (path: string) => {
       requestTags(path, {
-        onSuccess: (s) => {
+        onSuccess: async (s) => {
           if (!mounted.current) return;
           setSuggestion(s);
           // Fill only the fields the user hasn't touched yet.
@@ -63,10 +69,30 @@ export default function NewItemScreen() {
             }
             return next;
           });
+          // Privacy crop: a top-band face is removed from the stored photo
+          // (same path, replaced in place) and the preview follows. Silent
+          // by design — the garment below is what matters.
+          if (s.face && photo) {
+            try {
+              const fitted = fittedDims(photo.width, photo.height);
+              const cropped = await cropFaceFromPhoto(
+                photo.uri,
+                s.face,
+                fitted.width,
+                fitted.height,
+              );
+              if (cropped && mounted.current) {
+                await replaceClosetPhoto(path, cropped);
+                setPreviewUri(cropped);
+              }
+            } catch {
+              // Keep the original photo — cropping must never block saving.
+            }
+          }
         },
       });
     },
-    [requestTags],
+    [requestTags, photo],
   );
 
   const { uri, width, height } = params;
@@ -138,7 +164,7 @@ export default function NewItemScreen() {
     <>
       <Stack.Screen options={{ title: 'New item' }} />
       <ItemForm
-        imageUri={photo.uri}
+        imageUri={previewUri ?? photo.uri}
         imageLabel="Photo of the new item"
         status={
           upload.isError ? (
