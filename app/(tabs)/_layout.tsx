@@ -1,3 +1,4 @@
+import { Shirt, Sun } from 'lucide-react-native';
 import { SymbolView } from 'expo-symbols';
 import { Link, Tabs } from 'expo-router';
 import { Pressable } from 'react-native';
@@ -20,18 +21,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Tab One',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
-          ),
+          title: 'Today',
+          tabBarIcon: ({ color }) => <Sun size={26} strokeWidth={1.5} color={color} />,
           headerRight: () => (
             <Link href="/modal" asChild>
               <Pressable style={{ marginRight: 15 }}>
@@ -49,20 +40,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="two"
+        name="closet"
         options={{
-          title: 'Tab Two',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
-          ),
+          title: 'Closet',
+          // The screen draws its own safe-area header with the Add action.
+          headerShown: false,
+          tabBarAccessibilityLabel: 'Closet, your wardrobe items',
+          tabBarIcon: ({ color }) => <Shirt size={26} strokeWidth={1.5} color={color} />,
         }}
       />
     </Tabs>

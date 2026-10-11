@@ -4,14 +4,21 @@ import { Pressable, Text, View } from 'react-native';
 
 import { AvatarPreview } from '@/components/avatar/AvatarPreview';
 import { useAiRender } from '@/hooks/useAiRender';
+import { useClosetItem } from '@/hooks/useCloset';
+import { isRemoteUrl } from '@/services/closet';
 import type { OutfitBoard, OutfitContext } from '@/services/outfit';
 import type { WardrobeItemRow } from '@/types/database';
 
 function ItemPhoto({ item, size }: { item: WardrobeItemRow; size: number }) {
+  // `image_url` is a private storage path for uploaded items; the closet
+  // cache holds the signed URL (also covers saved outfits read from the DB).
+  const { item: cached } = useClosetItem(item.id);
+  const uri = cached?.imageUri ?? (isRemoteUrl(item.image_url) ? item.image_url : null);
   return (
     <Image
-      source={{ uri: item.image_url }}
+      source={uri ? { uri, cacheKey: item.image_url } : null}
       style={{ width: size, height: size, borderRadius: 12 }}
+      className="bg-border"
       cachePolicy="memory-disk"
       contentFit="cover"
       accessibilityLabel={`${item.category} in ${item.colors.join(', ') || 'unspecified colors'}`}

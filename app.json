@@ -45,6 +45,14 @@
         {
           "locationWhenInUsePermission": "Allow Daily Pulse to use your location for local weather."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow myOutfit to use your photos so you can add clothing items to your closet.",
+          "cameraPermission": "Allow myOutfit to use your camera so you can photograph clothing items for your closet.",
+          "microphonePermission": false
+        }
       ]
     ],
     "experiments": {
