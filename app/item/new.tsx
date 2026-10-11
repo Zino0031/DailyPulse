@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ItemForm } from '@/components/closet/ItemForm';
 import { StatusNote } from '@/components/closet/StatusNote';
@@ -13,11 +13,10 @@ import {
   useUploadClosetPhoto,
 } from '@/hooks/useCloset';
 import { useDiscardGuard } from '@/hooks/useDiscardGuard';
-import type { LocalPhoto } from '@/services/closet';
 import {
   cropFaceFromPhoto,
-  fittedDims,
   replaceClosetPhoto,
+  type LocalPhoto,
 } from '@/services/closet';
 import type { TagSuggestion } from '@/supabase/functions/_shared/wardrobeTags';
 import { EMPTY_TAGS, tagsEqual, type EditableTags } from '@/utils/closet';
@@ -31,10 +30,15 @@ type Field = keyof EditableTags;
  * touched yet, and everything stays editable before saving.
  */
 export default function NewItemScreen() {
-  const params = useLocalSearchParams<{ uri?: string; width?: string; height?: string }>();
-  const photo: LocalPhoto | null = params.uri
-    ? { uri: params.uri, width: Number(params.width) || 0, height: Number(params.height) || 0 }
-    : null;
+  const { uri, width, height } = useLocalSearchParams<{
+    uri?: string;
+    width?: string;
+    height?: string;
+  }>();
+  const photo = useMemo<LocalPhoto | null>(
+    () => (uri ? { uri, width: Number(width) || 0, height: Number(height) || 0 } : null),
+    [uri, width, height],
+  );
 
   const upload = useUploadClosetPhoto();
   const tagger = useSuggestTags();
@@ -42,7 +46,9 @@ export default function NewItemScreen() {
 
   const [tags, setTags] = useState<EditableTags>(EMPTY_TAGS);
   const [suggestion, setSuggestion] = useState<TagSuggestion | null>(null);
-  const [previewUri, setPreviewUri] = useState<string | null>(null);
+  /** Face-cropped copy of `photo`, once the privacy crop has replaced it. */
+  const [cropped, setCropped] = useState<LocalPhoto | null>(null);
+  const [cropping, setCropping] = useState(false);
   const [triedSave, setTriedSave] = useState(false);
   const touched = useRef(new Set<Field>());
   const imagePath = useRef<string | null>(null);
@@ -55,10 +61,35 @@ export default function NewItemScreen() {
   const { mutateAsync: uploadPhoto } = upload;
   const { mutate: requestTags } = tagger;
 
+  // Privacy (issue #35): a face the tagger found near the top is cropped
+  // out and the stored draft is swapped for the cropped file before Save
+  // is offered, so no face reaches the closet. Failures keep the original —
+  // cropping must never block saving.
+  const cropFace = useCallback(
+    async (path: string, face: NonNullable<TagSuggestion['face']>) => {
+      if (!photo) return;
+      setCropping(true);
+      try {
+        const next = await cropFaceFromPhoto(photo.uri, face);
+        if (!next) return;
+        const newPath = await replaceClosetPhoto(path, next.uri);
+        // Left mid-crop: the unmount cleanup only knew the old path.
+        if (!mounted.current) return void discardDraftPhoto(newPath);
+        imagePath.current = newPath;
+        setCropped(next);
+      } catch {
+        // Keep the original photo.
+      } finally {
+        if (mounted.current) setCropping(false);
+      }
+    },
+    [photo],
+  );
+
   const runTagger = useCallback(
     (path: string) => {
       requestTags(path, {
-        onSuccess: async (s) => {
+        onSuccess: (s) => {
           if (!mounted.current) return;
           setSuggestion(s);
           // Fill only the fields the user hasn't touched yet.
@@ -69,38 +100,18 @@ export default function NewItemScreen() {
             }
             return next;
           });
-          // Privacy crop: a top-band face is removed from the stored photo
-          // (same path, replaced in place) and the preview follows. Silent
-          // by design — the garment below is what matters.
-          if (s.face && photo) {
-            try {
-              const fitted = fittedDims(photo.width, photo.height);
-              const cropped = await cropFaceFromPhoto(
-                photo.uri,
-                s.face,
-                fitted.width,
-                fitted.height,
-              );
-              if (cropped && mounted.current) {
-                await replaceClosetPhoto(path, cropped);
-                setPreviewUri(cropped);
-              }
-            } catch {
-              // Keep the original photo — cropping must never block saving.
-            }
-          }
+          if (s.face) void cropFace(path, s.face);
         },
       });
     },
-    [requestTags, photo],
+    [requestTags, cropFace],
   );
 
-  const { uri, width, height } = params;
   const startUpload = useCallback(() => {
-    if (!uri) return;
+    if (!photo) return;
     // mutateAsync (not mutate callbacks) so we still hear back after an
     // unmount — a user who leaves mid-upload mustn't leave an orphan behind.
-    uploadPhoto({ uri, width: Number(width) || 0, height: Number(height) || 0 })
+    uploadPhoto(photo)
       .then((path) => {
         if (!mounted.current) return void discardDraftPhoto(path);
         imagePath.current = path;
@@ -109,7 +120,7 @@ export default function NewItemScreen() {
       .catch(() => {
         // Surfaced via `upload.isError` with a Retry action.
       });
-  }, [uri, width, height, uploadPhoto, runTagger]);
+  }, [photo, uploadPhoto, runTagger]);
 
   useEffect(() => {
     mounted.current = true;
@@ -136,10 +147,12 @@ export default function NewItemScreen() {
 
   const onSave = () => {
     setTriedSave(true);
-    if (!photo || !imagePath.current || !tags.category) return;
+    if (!photo || cropping || !imagePath.current || !tags.category) return;
     saved.current = true;
     add.mutate({
-      photo,
+      // The cropped file doubles as the grid preview, which is cached on
+      // disk by storage path — the original must never land in that cache.
+      photo: cropped ?? photo,
       imagePath: imagePath.current,
       tags: { ...tags, category: tags.category },
     });
@@ -159,12 +172,13 @@ export default function NewItemScreen() {
   }
 
   const uploading = upload.isPending;
+  const faceNote = cropped ? ' We cropped out a face to keep your closet private.' : '';
 
   return (
     <>
       <Stack.Screen options={{ title: 'New item' }} />
       <ItemForm
-        imageUri={previewUri ?? photo.uri}
+        imageUri={cropped?.uri ?? photo.uri}
         imageLabel="Photo of the new item"
         status={
           upload.isError ? (
@@ -178,6 +192,12 @@ export default function NewItemScreen() {
             <StatusNote tone="busy" message="Uploading your photo…" />
           ) : tagger.isPending ? (
             <StatusNote tone="busy" message="Suggesting tags… you can start picking them yourself." />
+          ) : cropping ? (
+            <StatusNote
+              tone="busy"
+              testID="new-item-cropping"
+              message="Cropping a face out of your photo for privacy…"
+            />
           ) : tagger.isError ? (
             <StatusNote
               tone="error"
@@ -194,23 +214,29 @@ export default function NewItemScreen() {
               }
             />
           ) : suggestion ? (
-            <StatusNote tone="ai" message="Tags suggested from your photo — review and adjust anything." />
+            <StatusNote
+              tone="ai"
+              testID="new-item-suggested"
+              message={`Tags suggested from your photo — review and adjust anything.${faceNote}`}
+            />
           ) : null
         }
         footer={
           <Button
             testID="new-item-save"
-            label={uploading ? 'Uploading photo…' : 'Save to closet'}
-            loading={uploading}
+            label={uploading ? 'Uploading photo…' : cropping ? 'Preparing photo…' : 'Save to closet'}
+            loading={uploading || cropping}
             // Stays tappable without a category so the tap explains what's missing.
-            disabled={!upload.isSuccess}
+            disabled={!upload.isSuccess || cropping}
             size="lg"
             className="flex-1"
             onPress={onSave}
             accessibilityHint={
               !upload.isSuccess
                 ? 'Available once the photo has uploaded'
-                : !tags.category
+                : cropping
+                  ? 'Available once the face is cropped out of your photo'
+                  : !tags.category
                   ? 'Pick a category first'
                   : 'Adds this item to your closet'
             }
