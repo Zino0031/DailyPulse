@@ -115,19 +115,33 @@ function pickOptional<T extends string>(list: readonly T[], value: unknown): T |
   return isMember(list, item) ? item : '';
 }
 
+/** Finite number clamped to the 0–1000 normalized range, else null. */
+function unit(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.min(1000, value))
+    : null;
+}
+
+/**
+ * Accepts the app's `{ x, y, w, h }` shape (what tag-item returns) and
+ * Gemini's native `box_2d` order `[ymin, xmin, ymax, xmax]` (what the model
+ * is asked for — it's the format Gemini is trained to emit). Anything
+ * malformed or empty is `null`: no crop rather than a wrong crop.
+ */
 function pickFace(value: unknown): FaceBox | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  let box: (number | null)[];
+  if (Array.isArray(value)) {
+    if (value.length !== 4) return null;
+    const [ymin, xmin, ymax, xmax] = value.map(unit);
+    if (ymin === null || xmin === null || ymax === null || xmax === null) return null;
+    box = [xmin, ymin, xmax - xmin, ymax - ymin];
+  } else if (typeof value === 'object' && value !== null) {
+    const raw = value as Record<string, unknown>;
+    box = [unit(raw.x), unit(raw.y), unit(raw.w), unit(raw.h)];
+  } else {
     return null;
   }
-  const raw = value as Record<string, unknown>;
-  const num = (v: unknown): number | null =>
-    typeof v === 'number' && Number.isFinite(v)
-      ? Math.max(0, Math.min(1000, v))
-      : null;
-  const x = num(raw.x);
-  const y = num(raw.y);
-  const w = num(raw.w);
-  const h = num(raw.h);
+  const [x, y, w, h] = box;
   if (x === null || y === null || w === null || h === null || w <= 0 || h <= 0) {
     return null;
   }
@@ -167,8 +181,13 @@ export function parseTagSuggestion(input: unknown): TagSuggestion | null {
     season: pickMany(SEASONS, raw.season ?? raw.seasons),
     fabric: pickOptional(FABRICS, raw.fabric),
     pattern: pickOptional(PATTERNS, raw.pattern),
-    face: pickFace(raw.face ?? raw.faceBox),
+    face: pickFace(raw.face ?? raw.face_box_2d),
   };
+}
+
+/** Seed/demo rows store full URLs; user uploads store storage paths. */
+export function isRemoteUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
 }
 
 /**
