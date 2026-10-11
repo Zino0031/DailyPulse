@@ -1,4 +1,4 @@
-import { MAX_COLORS, isOwnPath, parseTagSuggestion } from '../wardrobeTags';
+import { MAX_COLORS, isOwnPath, isRemoteUrl, parseTagSuggestion } from '../wardrobeTags';
 
 describe('parseTagSuggestion', () => {
   const valid = {
@@ -8,6 +8,7 @@ describe('parseTagSuggestion', () => {
     season: ['spring', 'autumn'],
     fabric: 'cotton',
     pattern: 'striped',
+    face: null,
   };
 
   it('accepts a well-formed object', () => {
@@ -33,6 +34,7 @@ describe('parseTagSuggestion', () => {
       season: ['winter'],
       fabric: '',
       pattern: '',
+      face: null,
     });
   });
 
@@ -93,6 +95,55 @@ describe('parseTagSuggestion', () => {
 
   it('never stores placeholder colors like "unknown"', () => {
     expect(parseTagSuggestion({ ...valid, colors: ['unknown'] })?.colors).toEqual([]);
+  });
+
+  describe('face', () => {
+    it('accepts a valid normalized box', () => {
+      expect(
+        parseTagSuggestion({ ...valid, face: { x: 100, y: 50, w: 200, h: 250 } })?.face,
+      ).toEqual({ x: 100, y: 50, w: 200, h: 250 });
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['null', null],
+      ['a string', 'no face'],
+      ['zero width', { x: 1, y: 1, w: 0, h: 5 }],
+      ['NaN', { x: NaN, y: 1, w: 2, h: 3 }],
+      ['a 3-number box_2d', [1, 2, 3]],
+      ['an inverted box_2d', [300, 100, 200, 400]],
+      ['a box_2d with a string', [0, 0, '500', 500]],
+    ])('returns null for %s', (_label, face) => {
+      expect(parseTagSuggestion({ ...valid, face })?.face).toBeNull();
+    });
+
+    it("converts Gemini's native box_2d [ymin, xmin, ymax, xmax]", () => {
+      expect(
+        parseTagSuggestion({ ...valid, face_box_2d: [50, 100, 300, 300] })?.face,
+      ).toEqual({ x: 100, y: 50, w: 200, h: 250 });
+    });
+
+    it('round-trips: the converted box parses back unchanged on the client', () => {
+      const server = parseTagSuggestion({ ...valid, face_box_2d: [0, 400, 220, 600] });
+      expect(parseTagSuggestion(JSON.stringify(server))).toEqual(server);
+    });
+
+    it('clamps out-of-range coordinates', () => {
+      expect(
+        parseTagSuggestion({ ...valid, face: { x: -5, y: 10, w: 2000, h: 50 } })?.face,
+      ).toEqual({ x: 0, y: 10, w: 1000, h: 50 });
+    });
+  });
+});
+
+describe('isRemoteUrl', () => {
+  it.each([
+    ['https://example.com/a.jpg', true],
+    ['HTTP://example.com/a.jpg', true],
+    ['user-1/123.jpg', false],
+    ['ftp://example.com/a.jpg', false],
+  ])('%s → %s', (value, expected) => {
+    expect(isRemoteUrl(value)).toBe(expected);
   });
 });
 

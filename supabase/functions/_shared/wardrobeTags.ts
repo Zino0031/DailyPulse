@@ -62,6 +62,17 @@ export type ColorTag = (typeof COLORS)[number];
 export type Fabric = (typeof FABRICS)[number];
 export type Pattern = (typeof PATTERNS)[number];
 
+/**
+ * Normalized 0–1000 face box for privacy cropping (top-left origin).
+ * Null when no visible face — the photo is stored untouched.
+ */
+export interface FaceBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface TagSuggestion {
   category: Category;
   colors: ColorTag[];
@@ -70,6 +81,8 @@ export interface TagSuggestion {
   /** '' when the model can't tell — never a guess. */
   fabric: Fabric | '';
   pattern: Pattern | '';
+  /** Face to crop for privacy; null = store the photo as-is. */
+  face: FaceBox | null;
 }
 
 /** Upper bound so a chatty model can't flood the color chips. */
@@ -100,6 +113,39 @@ function pickMany<T extends string>(list: readonly T[], value: unknown): T[] {
 function pickOptional<T extends string>(list: readonly T[], value: unknown): T | '' {
   const item = normalize(value);
   return isMember(list, item) ? item : '';
+}
+
+/** Finite number clamped to the 0–1000 normalized range, else null. */
+function unit(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.min(1000, value))
+    : null;
+}
+
+/**
+ * Accepts the app's `{ x, y, w, h }` shape (what tag-item returns) and
+ * Gemini's native `box_2d` order `[ymin, xmin, ymax, xmax]` (what the model
+ * is asked for — it's the format Gemini is trained to emit). Anything
+ * malformed or empty is `null`: no crop rather than a wrong crop.
+ */
+function pickFace(value: unknown): FaceBox | null {
+  let box: (number | null)[];
+  if (Array.isArray(value)) {
+    if (value.length !== 4) return null;
+    const [ymin, xmin, ymax, xmax] = value.map(unit);
+    if (ymin === null || xmin === null || ymax === null || xmax === null) return null;
+    box = [xmin, ymin, xmax - xmin, ymax - ymin];
+  } else if (typeof value === 'object' && value !== null) {
+    const raw = value as Record<string, unknown>;
+    box = [unit(raw.x), unit(raw.y), unit(raw.w), unit(raw.h)];
+  } else {
+    return null;
+  }
+  const [x, y, w, h] = box;
+  if (x === null || y === null || w === null || h === null || w <= 0 || h <= 0) {
+    return null;
+  }
+  return { x, y, w, h };
 }
 
 /**
@@ -135,7 +181,13 @@ export function parseTagSuggestion(input: unknown): TagSuggestion | null {
     season: pickMany(SEASONS, raw.season ?? raw.seasons),
     fabric: pickOptional(FABRICS, raw.fabric),
     pattern: pickOptional(PATTERNS, raw.pattern),
+    face: pickFace(raw.face ?? raw.face_box_2d),
   };
+}
+
+/** Seed/demo rows store full URLs; user uploads store storage paths. */
+export function isRemoteUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
 }
 
 /**

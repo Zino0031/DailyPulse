@@ -87,6 +87,7 @@ describe('TagEditor', () => {
       season: ['autumn', 'winter'],
       fabric: 'wool',
       pattern: 'solid',
+      face: null,
     };
     await render(<Harness initial={suggestion} suggestion={suggestion} />);
     expect(screen.getAllByLabelText('Suggested by AI')).toHaveLength(6);
