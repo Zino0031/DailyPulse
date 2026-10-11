@@ -13,7 +13,9 @@
 // signed URL (expo-image caches it). Without a token the function 503s and
 // the app falls back to the keyless Pollinations render, then to photos.
 
-import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
+
+import { isOwnPath, isRemoteUrl } from '../_shared/wardrobeTags.ts';
 
 // Ordered fallback chain — providers retire models regularly (FLUX.1-schnell
 // went 410 mid-project); first 2xx wins, failures are fast and silent.
@@ -34,12 +36,12 @@ const corsHeaders = {
 const CF_MODEL = '@cf/black-forest-labs/flux-1-schnell';
 // klein-4b: fixed 4-step, up to 4 binary image refs (<512px each).
 const CF_KLEIN_MODEL = '@cf/black-forest-labs/flux-2-klein-4b';
+const KLEIN_REF_PX = 400;
 
 /** Shrink public (query-less) URLs under klein's 512px input limit. */
 function kleinSrc(url: string): string {
-  if (!/^https?:\/\//i.test(url)) return url;
   if (url.includes('?')) return url;
-  return `https://images.weserv.nl/?url=${url.replace(/^https?:\/\//, '')}&w=400&output=jpg`;
+  return `https://images.weserv.nl/?url=${url.replace(/^https?:\/\//, '')}&w=${KLEIN_REF_PX}&output=jpg`;
 }
 
 interface RefBytes {
@@ -47,28 +49,19 @@ interface RefBytes {
   mime: string;
 }
 
-interface BucketAdmin {
-  storage: {
-    from: (bucket: string) => {
-      download: (
-        path: string,
-      ) => Promise<{ data: Blob | null; error: { message: string } | null }>;
-    };
-  };
-}
-
 /**
- * Garment photos arrive either as http(s) URLs (seed data, signed URLs)
- * or as private-bucket paths (real uploads) — resolve both server-side
- * with the service role so renders never depend on client-side signing.
+ * Garment photos arrive either as http(s) URLs (seed data) or as
+ * private-bucket paths (real uploads) — resolve both server-side with the
+ * service role so renders never depend on client-side signing. Callers must
+ * have checked path ownership first (see `ownRef`).
  */
 async function resolveBytes(
-  admin: BucketAdmin,
+  admin: SupabaseClient,
   imageRef: string,
 ): Promise<RefBytes | null> {
   try {
-    if (/^https?:\/\//i.test(imageRef)) {
-      const res = await fetch(imageRef, {
+    if (isRemoteUrl(imageRef)) {
+      const res = await fetch(kleinSrc(imageRef), {
         headers: { 'User-Agent': 'DailyPulse-render/1.0' },
       });
       if (!res.ok) {
@@ -80,7 +73,14 @@ async function resolveBytes(
         mime: res.headers.get('content-type')?.split(';')[0] || 'image/jpeg',
       };
     }
-    const { data, error } = await admin.storage.from('wardrobe').download(imageRef);
+    // Uploads are 1080px — over klein's input limit. Storage image
+    // transformations shrink them; projects without that feature fall back
+    // to the original (klein may then reject it and schnell takes over).
+    const bucket = admin.storage.from('wardrobe');
+    let { data, error } = await bucket.download(imageRef, {
+      transform: { width: KLEIN_REF_PX, resize: 'contain' },
+    });
+    if (error || !data) ({ data, error } = await bucket.download(imageRef));
     if (error || !data) {
       console.error('[render-outfit] bucket download failed', error?.message, imageRef.slice(0, 90));
       return null;
@@ -93,19 +93,26 @@ async function resolveBytes(
 }
 
 /**
+ * Keeps a garment reference only if it's a public URL or the caller's own
+ * storage path. The service role bypasses storage RLS, so without this any
+ * signed-in user could render (and so read) another user's private photos.
+ */
+function ownRef(ref: string | undefined, userId: string): string | undefined {
+  if (!ref) return undefined;
+  return isRemoteUrl(ref) || isOwnPath(ref, userId) ? ref : undefined;
+}
+
+/**
  * Multi-reference render: garments go in as input_image_0..3, prompt names
  * them by index. Falls back to null (caller tries schnell) on any failure.
  */
 async function renderViaKlein(
+  admin: SupabaseClient,
   accountId: string,
   apiToken: string,
   items: RenderItem[],
   ctx: RenderCtx,
 ): Promise<ArrayBuffer | null> {
-  const admin = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-  );
   const refs: { bytes: ArrayBuffer; mime: string; label: string }[] = [];
   console.log(
     '[render-outfit] klein input items:',
@@ -113,11 +120,7 @@ async function renderViaKlein(
   );
   for (const item of items.slice(0, 4)) {
     if (!item.image_url) continue;
-    // Private-bucket paths resolve via service role; public URLs go
-    // through the shrink proxy to respect klein's 512px input limit.
-    const dl = /^https?:\/\//i.test(item.image_url)
-      ? await resolveBytes(admin, kleinSrc(item.image_url))
-      : await resolveBytes(admin, item.image_url);
+    const dl = await resolveBytes(admin, item.image_url);
     if (dl) {
       refs.push({
         ...dl,
@@ -277,11 +280,13 @@ Deno.serve(async (req) => {
     const user = userData.user;
     if (!user) return json({ error: 'sign in required' }, 401);
 
+    const admin = createClient(supabaseUrl, serviceKey);
     const { outfitId, items: bodyItems, ctx, seed = 1 } = await req.json();
-    let items: RenderItem[] = Array.isArray(bodyItems) ? bodyItems : [];
+    let items: RenderItem[] = Array.isArray(bodyItems)
+      ? (bodyItems as RenderItem[]).map((i) => ({ ...i, image_url: ownRef(i.image_url, user.id) }))
+      : [];
     let promptCtx: RenderCtx = ctx;
     if (typeof outfitId === 'string') {
-      const admin = createClient(supabaseUrl, serviceKey);
       const { data: row, error } = await admin
         .from('outfits')
         .select('item_ids,weather_summary,event_summary,mood')
@@ -291,8 +296,9 @@ Deno.serve(async (req) => {
       if (error || !row) return json({ error: 'outfit not found' }, 404);
       const { data: found } = await admin
         .from('wardrobe_items')
-        .select('id,category,colors,formality')
-        .in('id', row.item_ids);
+        .select('id,category,colors,formality,image_url')
+        .in('id', row.item_ids)
+        .eq('user_id', user.id);
       const byId = new Map(
         ((found ?? []) as CatalogRow[]).map((i) => [i.id, i]),
       );
@@ -319,7 +325,7 @@ Deno.serve(async (req) => {
     let imageBytes: ArrayBuffer | null = null;
     let engine = 'cf-klein';
     if (accountId && apiToken) {
-      imageBytes = await renderViaKlein(accountId, apiToken, items, promptCtx);
+      imageBytes = await renderViaKlein(admin, accountId, apiToken, items, promptCtx);
     }
     if (!imageBytes) {
       imageBytes = await renderViaCloudflare(prompt, seed);
@@ -376,7 +382,6 @@ Deno.serve(async (req) => {
     }
     console.log('[render-outfit] rendered via', engine);
 
-    const admin = createClient(supabaseUrl, serviceKey);
     const path = `renders/${user.id}/${crypto.randomUUID()}.png`;
     const { error: uploadError } = await admin.storage
       .from('outfits')
