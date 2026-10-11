@@ -6,12 +6,26 @@
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
 import { getSupabase } from '@/services/supabase';
+import {
+  isRemoteUrl,
+  type FaceBox,
+} from '@/supabase/functions/_shared/wardrobeTags';
 import type { WardrobeItemRow } from '@/types/database';
+
+export { isRemoteUrl };
 
 const BUCKET = 'wardrobe';
 const SIGNED_URL_TTL_S = 60 * 60 * 24 * 7;
 /** Long edge after resize: sharp on a 3-column grid, fast to upload + tag. */
 const MAX_EDGE_PX = 1080;
+/**
+ * Privacy crop only when the face ends in this top band of the photo (in
+ * the box's 0–1000 units) — which always leaves ≥ 53% of it, the garment,
+ * after the margin below.
+ */
+const FACE_BAND = 450;
+/** Gap left below the chin so no jawline survives the crop. */
+const FACE_MARGIN = 20;
 
 /** Pixel dims a photo will have after the upload downscale (pure math). */
 export function fittedDims(
@@ -34,11 +48,6 @@ export interface ClosetItem extends WardrobeItemRow {
   imageUri: string | null;
   /** True while an optimistic create/update hasn't been confirmed. */
   pending?: boolean;
-}
-
-/** Seed/demo rows store full URLs; user uploads store storage paths. */
-export function isRemoteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
 }
 
 export async function fetchClosetItems(userId: string): Promise<ClosetItem[]> {
@@ -95,9 +104,15 @@ export async function uploadClosetPhoto(
   }
   const image = await context.renderAsync();
   const saved = await image.saveAsync({ compress: 0.8, format: SaveFormat.JPEG });
+  return uploadJpeg(`${userId}/${newFileName()}`, saved.uri);
+}
 
-  const body = await (await fetch(saved.uri)).arrayBuffer();
-  const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.jpg`;
+function newFileName(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.jpg`;
+}
+
+async function uploadJpeg(path: string, localUri: string): Promise<string> {
+  const body = await (await fetch(localUri)).arrayBuffer();
   const { error } = await getSupabase()
     .storage.from(BUCKET)
     .upload(path, body, { contentType: 'image/jpeg', upsert: false });
@@ -105,49 +120,56 @@ export async function uploadClosetPhoto(
   return path;
 }
 
-/** Face box + the pixel dims of the file it was detected in. */
-export interface FaceCrop {
-  box: { x: number; y: number; w: number; h: number };
-  fileWidth: number;
-  fileHeight: number;
+/**
+ * Pixel rect that keeps everything below a detected face, or `null` when the
+ * face isn't in the top band (cropping would cut the garment). Pure math on the
+ * normalized 0–1000 box, so it works at any resolution.
+ */
+export function faceCropRect(
+  face: FaceBox,
+  width: number,
+  height: number,
+): { originX: number; originY: number; width: number; height: number } | null {
+  if (width <= 0 || height <= 0) return null;
+  // Integer per-mille math: no float drift moving the cut by a pixel.
+  const faceBottom = Math.min(1000, face.y + face.h);
+  if (faceBottom > FACE_BAND) return null;
+  const originY = Math.ceil(((faceBottom + FACE_MARGIN) * height) / 1000);
+  return { originX: 0, originY, width, height: height - originY };
 }
 
 /**
- * Crops a detected face out of a local photo and returns the cropped file
- * URI, or `null` when cropping isn't sensible (face outside the top band,
- * or too little garment would remain). Top-third faces are the clothing
- * flat-lay/selfie case: everything below the face is kept.
+ * Crops a detected face out of the picked photo and returns the cropped,
+ * upload-sized file — or `null` when no crop applies (see `faceCropRect`).
+ * Dimensions come from the decoded image itself, never from picker
+ * metadata, so the crop always lands where the model saw the face.
  */
 export async function cropFaceFromPhoto(
   localUri: string,
-  face: FaceCrop['box'],
-  fileWidth: number,
-  fileHeight: number,
-): Promise<string | null> {
-  if (fileWidth <= 0 || fileHeight <= 0) return null;
-  const bottomPx = ((face.y + face.h) / 1000) * fileHeight;
-  const marginPx = 0.02 * fileHeight;
-  const originY = Math.min(fileHeight - 1, Math.floor(bottomPx + marginPx));
-  const height = fileHeight - originY;
-  // Only crop faces sitting in the top band with plenty of garment left.
-  if (bottomPx > 0.45 * fileHeight || height < 0.4 * fileHeight) return null;
-  const image = await ImageManipulator.manipulate(localUri)
-    .crop({ originX: 0, originY, width: fileWidth, height })
-    .renderAsync();
+  face: FaceBox,
+): Promise<LocalPhoto | null> {
+  const source = await ImageManipulator.manipulate(localUri).renderAsync();
+  const rect = faceCropRect(face, source.width, source.height);
+  if (!rect) return null;
+  const fitted = fittedDims(rect.width, rect.height);
+  const context = ImageManipulator.manipulate(source).crop(rect);
+  if (fitted.width !== rect.width) context.resize({ width: fitted.width, height: null });
+  const image = await context.renderAsync();
   const saved = await image.saveAsync({ compress: 0.8, format: SaveFormat.JPEG });
-  return saved.uri;
+  return { uri: saved.uri, width: saved.width, height: saved.height };
 }
 
 /**
- * Replaces an uploaded draft photo in place (same path, no orphans) —
- * used after face-cropping the local file post-tagging.
+ * Swaps an uploaded draft photo for a new file. Uploads to a *new* path,
+ * then removes the old one: Supabase's CDN can keep serving an overwritten
+ * object, which for a privacy crop would mean the face lingers. Returns the
+ * new path; if the upload fails the old photo stays untouched.
  */
-export async function replaceClosetPhoto(path: string, localUri: string): Promise<void> {
-  const body = await (await fetch(localUri)).arrayBuffer();
-  const { error } = await getSupabase()
-    .storage.from(BUCKET)
-    .upload(path, body, { contentType: 'image/jpeg', upsert: true });
-  if (error) throw error;
+export async function replaceClosetPhoto(oldPath: string, localUri: string): Promise<string> {
+  const folder = oldPath.slice(0, oldPath.lastIndexOf('/') + 1);
+  const path = await uploadJpeg(`${folder}${newFileName()}`, localUri);
+  await removeClosetPhoto(oldPath);
+  return path;
 }
 
 /** Best-effort cleanup (abandoned drafts, deleted items). Never throws. */
