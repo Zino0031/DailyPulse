@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
+import { useAuthStore } from '@/store/useAuthStore';
+import type { UserRow } from '@/types/database';
 
 export const GENDERS = [
   'female',
@@ -39,5 +41,33 @@ export function useProfile() {
     staleTime: 10 * 60 * 1000,
     retry: 1,
     refetchOnWindowFocus: false,
+  });
+}
+
+export type ProfileDetails = Pick<
+  UserRow,
+  'full_name' | 'email' | 'gender' | 'location_lat' | 'location_lon' | 'tier' | 'created_at'
+>;
+
+/**
+ * Full `users` row for the Profile tab. Keyed by user id so a persisted or
+ * in-memory cache never shows one account's details to another.
+ */
+export function useProfileDetails() {
+  const userId = useAuthStore((s) => s.user?.id ?? null);
+  return useQuery({
+    queryKey: ['profile', userId, 'details'],
+    queryFn: async (): Promise<ProfileDetails | null> => {
+      const { data, error } = await getSupabase()
+        .from('users')
+        .select('full_name, email, gender, location_lat, location_lon, tier, created_at')
+        .eq('id', userId as string)
+        .maybeSingle();
+      if (error) throw error;
+      return data as ProfileDetails | null;
+    },
+    enabled: userId !== null && isSupabaseConfigured(),
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
   });
 }
