@@ -7,7 +7,7 @@ const upsert = jest.fn();
 (getSupabase as jest.Mock).mockReturnValue({ from: () => ({ upsert }) });
 
 const fetchMock = jest.fn();
-global.fetch = fetchMock as unknown as typeof fetch;
+globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 beforeEach(() => {
   upsert.mockReset().mockResolvedValue({ error: null });
