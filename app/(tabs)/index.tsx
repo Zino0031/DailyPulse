@@ -1,6 +1,7 @@
 import { Link } from 'expo-router';
 import { Linking, Pressable, ScrollView, Text, View } from 'react-native';
 
+import { AvatarPreview } from '@/components/avatar/AvatarPreview';
 import { WeatherWidget } from '@/components/home/WeatherWidget';
 import { MoodSelector } from '@/components/home/MoodSelector';
 import { SchedulePreview } from '@/components/home/SchedulePreview';
@@ -19,7 +20,19 @@ export default function HomeScreen() {
     <ScrollView
       className="flex-1 bg-bg"
       contentContainerClassName="px-6 pb-8 pt-12">
-      <Text className="text-title-1 font-bold text-text">Today</Text>
+      <View className="flex-row items-center justify-between">
+        <View className="flex-1">
+          <Text className="text-title-1 font-bold text-text">Today</Text>
+        </View>
+        <Link href="/onboarding/avatar-capture" asChild>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Your avatar"
+            accessibilityHint="Opens the avatar setup">
+            <AvatarPreview size={48} />
+          </Pressable>
+        </Link>
+      </View>
       <Text className="mb-8 mt-1 text-footnote text-text-muted">
         {usingGps
           ? 'Weather for your current location.'
