@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { LogOut } from "lucide-react-native";
+import { router } from "expo-router";
+import { LogOut, Pencil } from "lucide-react-native";
 import { useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -8,18 +9,13 @@ import { AvatarPreview } from "@/components/avatar/AvatarPreview";
 import { StatusNote } from "@/components/closet/StatusNote";
 import { Button } from "@/components/ui/Button";
 import { ConfirmSheet } from "@/components/ui/Sheet";
+import { GENDER_LABEL, STYLE_LABEL } from "@/constants/profile";
 import { useAuth } from "@/hooks/useAuth";
-import { useProfileDetails } from "@/hooks/useProfile";
+import { draftFromProfile, useProfileDetails } from "@/hooks/useProfile";
 import { friendlyError } from "@/utils/errors";
+import { hasErrors, validateProfile } from "@/utils/profile";
 
-const GENDER_LABEL: Record<string, string> = {
-  female: "Female",
-  male: "Male",
-  nonbinary: "Nonbinary",
-  prefer_not_to_say: "Prefer not to say",
-};
-
-/** Account details + sign out. Epic 1 adds editing on top of this. */
+/** Account details, edit / finish profile (issue #5) and sign out. */
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();
   const queryClient = useQueryClient();
@@ -35,6 +31,10 @@ export default function ProfileScreen() {
 
   const name = profile?.full_name?.trim() || "Your profile";
   const email = profile?.email ?? user?.email ?? "";
+  // Skipped onboarding or left fields blank → nudge to finish.
+  const incomplete = profile
+    ? hasErrors(validateProfile(draftFromProfile(profile)))
+    : false;
 
   const onSignOut = async () => {
     setConfirmOpen(false);
@@ -97,7 +97,10 @@ export default function ProfileScreen() {
           <DetailRow
             label="Gender"
             value={
-              profile ? (GENDER_LABEL[profile.gender] ?? profile.gender) : null
+              profile
+                ? (GENDER_LABEL[profile.gender as keyof typeof GENDER_LABEL] ??
+                  profile.gender)
+                : null
             }
             loading={isPending}
           />
@@ -105,10 +108,22 @@ export default function ProfileScreen() {
             label="Location"
             value={
               profile?.location_lat != null && profile.location_lon != null
-                ? `${Number(profile.location_lat).toFixed(2)}, ${Number(profile.location_lon).toFixed(2)}`
+                ? (profile.location_name ??
+                  `${Number(profile.location_lat).toFixed(2)}, ${Number(profile.location_lon).toFixed(2)}`)
                 : profile
                   ? "Not set"
                   : null
+            }
+            loading={isPending}
+          />
+          <DetailRow
+            label="Style"
+            value={
+              profile
+                ? profile.style_prefs?.length
+                  ? profile.style_prefs.map((s) => STYLE_LABEL[s] ?? s).join(", ")
+                  : "Not set"
+                : null
             }
             loading={isPending}
           />
@@ -131,13 +146,31 @@ export default function ProfileScreen() {
           />
         </View>
 
+        {profile !== undefined && (
+          <Button
+            testID="profile-edit"
+            label={incomplete ? "Finish your profile" : "Edit profile"}
+            icon={Pencil}
+            variant={incomplete ? "primary" : "secondary"}
+            size="lg"
+            className="mt-8"
+            onPress={() =>
+              router.push({
+                pathname: "/onboarding/profile-form",
+                params: { mode: "edit" },
+              })
+            }
+            accessibilityHint="Opens the profile form"
+          />
+        )}
+
         <Button
           testID="profile-sign-out"
           label="Sign out"
           icon={LogOut}
           variant="danger"
           size="lg"
-          className="mt-8"
+          className="mt-4"
           loading={signingOut}
           onPress={() => setConfirmOpen(true)}
           accessibilityHint="Asks for confirmation before signing you out"

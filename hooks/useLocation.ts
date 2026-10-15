@@ -73,32 +73,12 @@ export function useDeviceLocation(): DeviceLocation {
           });
           setStatus('granted');
         }
-        // Best-effort place name — never blocks the weather. Native uses the
-        // OS geocoder; other platforms fall back to keyless Nominatim.
+        // Best-effort place name — never blocks the weather.
         if (mounted) {
-          let label: string | null = null;
-          if (Platform.OS !== 'web') {
-            try {
-              const places = await Location.reverseGeocodeAsync({
-                latitude: fix.coords.latitude,
-                longitude: fix.coords.longitude,
-              });
-              const first = places[0];
-              label = first
-                ? [first.city ?? first.district ?? first.region, first.country]
-                    .filter(Boolean)
-                    .join(', ')
-                : null;
-            } catch {
-              label = null;
-            }
-          }
-          if (!label) {
-            label = await reverseGeocodeWeb({
-              latitude: fix.coords.latitude,
-              longitude: fix.coords.longitude,
-            });
-          }
+          const label = await resolvePlaceLabel({
+            latitude: fix.coords.latitude,
+            longitude: fix.coords.longitude,
+          });
           if (mounted && label) setPlaceLabel(label);
         }
       } catch {
@@ -117,6 +97,60 @@ export function useDeviceLocation(): DeviceLocation {
   }, []);
 
   return { coordinates, placeLabel, status, blocked, retry };
+}
+
+/**
+ * "City, Country" for a fix. Native uses the OS geocoder; other platforms
+ * (and native misses) fall back to keyless Nominatim. Null when unknown.
+ */
+export async function resolvePlaceLabel(coords: Coordinates): Promise<string | null> {
+  let label: string | null = null;
+  if (Platform.OS !== 'web') {
+    try {
+      const places = await Location.reverseGeocodeAsync(coords);
+      const first = places[0];
+      label = first
+        ? [first.city ?? first.district ?? first.region, first.country]
+            .filter(Boolean)
+            .join(', ')
+        : null;
+    } catch {
+      label = null;
+    }
+  }
+  return label || reverseGeocodeWeb(coords);
+}
+
+export type LocateResult =
+  | { ok: true; coordinates: Coordinates; label: string | null }
+  | { ok: false; reason: 'denied' | 'blocked' | 'unavailable' | 'error' };
+
+/**
+ * One tap-triggered GPS fix + place name (onboarding location picker).
+ * Unlike `useDeviceLocation`, nothing runs until the user asks.
+ */
+export async function locateOnce(): Promise<LocateResult> {
+  try {
+    if (Platform.OS === 'android') {
+      try {
+        await Location.enableNetworkProviderAsync();
+      } catch {
+        // Declined — the fix may still succeed.
+      }
+    }
+    if (!(await Location.hasServicesEnabledAsync())) {
+      return { ok: false, reason: 'unavailable' };
+    }
+    const permission = await Location.requestForegroundPermissionsAsync();
+    if (permission.status !== 'granted') {
+      return { ok: false, reason: permission.canAskAgain ? 'denied' : 'blocked' };
+    }
+    const fix = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+    const coordinates = { latitude: fix.coords.latitude, longitude: fix.coords.longitude };
+    return { ok: true, coordinates, label: await resolvePlaceLabel(coordinates) };
+  } catch {
+    return { ok: false, reason: 'error' };
+  }
 }
 
 /**
