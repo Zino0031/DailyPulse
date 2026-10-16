@@ -25,9 +25,11 @@ import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client
 import { useEffect, type ReactNode } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { Paywall } from '@/components/subscription/Paywall';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfileDetails } from '@/hooks/useProfile';
+import { usePurchasesIdentity } from '@/hooks/useSubscription';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -109,6 +111,8 @@ export default function RootLayout() {
               />
               <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
             </Stack>
+            {/* One app-wide paywall; screens open it via usePaywallStore. */}
+            <Paywall />
           </BootGate>
         </ThemeProvider>
       </PersistQueryClientProvider>
@@ -139,6 +143,7 @@ function BootGate({
   const segments = useSegments();
   const { session, isLoading, isRecovering } = useAuth();
   const profile = useProfileDetails();
+  usePurchasesIdentity();
 
   const ready = fontsLoaded && !isLoading;
   // A failed read (offline, missing migration) never traps the user in
