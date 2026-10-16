@@ -272,6 +272,9 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
+  // Set once a preview is spent; any later failure gives it back.
+  let refundPreview: () => Promise<unknown> = async () => {};
+
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -320,6 +323,28 @@ Deno.serve(async (req) => {
     if (items.length === 0 || !promptCtx) {
       return json({ error: 'items and ctx (or outfitId) are required' }, 400);
     }
+
+    // Preview budget: one spend per fresh render, refunded on failure.
+    // Cached signed URLs never reach here, so re-views don't double-spend.
+    const { data: preview, error: previewError } = await admin
+      .rpc('consume_preview', { p_user: user.id })
+      .single<{ allowed: boolean; used: number; daily_limit: number | null; tier: string }>();
+    if (previewError || !preview) throw previewError ?? new Error('preview check failed');
+    const previewUsage = { used: preview.used, limit: preview.daily_limit };
+    if (!preview.allowed) {
+      return json(
+        { capped: true, code: 'preview_limit', usage: previewUsage, error: 'daily preview limit reached' },
+        429,
+      );
+    }
+    let previewRefunded = false;
+    let previewSpent = false;
+    refundPreview = async () => {
+      if (previewRefunded || !previewSpent) return;
+      previewRefunded = true;
+      await admin.rpc('refund_preview', { p_user: user.id });
+    };
+    previewSpent = true;
 
     const { data: profile } = await admin
       .from('users')
@@ -391,7 +416,11 @@ Deno.serve(async (req) => {
       }
     }
     if (!imageBytes) {
-      return json({ error: 'render unavailable, try again' }, 502);
+      await refundPreview();
+      return json(
+        { error: 'render unavailable, try again', usage: previewUsage },
+        502,
+      );
     }
     console.log('[render-outfit] rendered via', engine);
 
@@ -417,9 +446,11 @@ Deno.serve(async (req) => {
       renderUrl: signed.signedUrl,
       engine,
       quality: engine === 'cf-flux' ? 'standard' : quality,
+      usage: previewUsage,
     });
   } catch (e) {
     console.error('[render-outfit]', e);
+    await refundPreview().catch(() => {});
     return new Response(JSON.stringify({ error: 'something went wrong' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

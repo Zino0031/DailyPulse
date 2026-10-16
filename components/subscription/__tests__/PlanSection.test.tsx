@@ -5,19 +5,22 @@ import type { ReactNode } from 'react';
 import { PlanSection } from '@/components/subscription/PlanSection';
 import { closetKeys } from '@/hooks/useCloset';
 import { profileKeys } from '@/hooks/useProfile';
+import { subscriptionKeys } from '@/hooks/useSubscription';
 import { useAuthStore } from '@/store/useAuthStore';
 import { usePaywallStore } from '@/store/usePaywallStore';
+import { usageDay } from '@/supabase/functions/_shared/tiers';
 import type { Tier } from '@/types/database';
 
 const USER = 'user-1';
 let client: QueryClient;
 
-function renderSection(tier?: Tier, items = 0) {
+function renderSection(tier?: Tier, items = 0, usedGenerations = 0) {
   if (tier) client.setQueryData(profileKeys.details(USER), { tier } as never);
   client.setQueryData(
     closetKeys.items(USER),
     Array.from({ length: items }, (_, i) => ({ id: `i${i}` })),
   );
+  client.setQueryData(subscriptionKeys.usage(USER, usageDay()), usedGenerations);
   const Wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
@@ -49,10 +52,10 @@ it('shows both allowances with numbers, and a full closet in words', async () =>
   expect(screen.getByText(/^Resets (today|tomorrow) at /)).toBeTruthy();
 });
 
-it('shows unlimited allowances on Pro and opens the plan sheet', async () => {
-  await renderSection('pro', 300);
-  expect(screen.getByText('300 · Unlimited')).toBeTruthy();
-  expect(screen.queryByText(/^Resets /)).toBeNull();
+it('shows finite Pro budgets and opens the plan sheet', async () => {
+  await renderSection('pro', 300, 7);
+  expect(screen.getByText('7 of 20')).toBeTruthy();
+  expect(screen.queryByText(/^Resets /)).toBeTruthy();
   await fireEvent.press(screen.getByLabelText('Manage plan'));
   expect(usePaywallStore.getState().reason).toBe('upgrade');
 });

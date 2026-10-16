@@ -1,8 +1,10 @@
-// generate-outfit — Epic 5 outfit picker (#14).
-// POST { weather: { tempC, rainPct }, dress, mood, excludeTopIds?: string[], regenerate?: boolean }
-//   -> { outfitId, itemIds, reasoning, usage: { used, limit } }
+// generate-outfit — Epic 5 outfit picker (#14), budgets per issue #42.
+// POST { weather: { tempC, rainPct }, dress, mood, count?: number, excludeTopIds?: string[], regenerate?: boolean }
+//   -> { outfits: [{ outfitId, itemIds, reasoning }], usage: { used, limit } }
 //    | 429 { capped: true, code: 'daily_limit', usage }
 //    | 403 { locked: true, code: 'regenerate_locked' }
+// `count` is clamped to the caller's plan.outfitOptions (Free 1, Plus 3,
+// Pro 5). One consume_generation spend per request, refunded on failure.
 //
 // Auth: caller JWT (anon key). Gemini key lives in function secrets:
 //   supabase secrets set GEMINI_API_KEY=<key from https://aistudio.google.com>
@@ -46,6 +48,7 @@ function buildPrompt(
   mood: string,
   excludeTopIds: string[],
   gender: string,
+  count: number,
 ): string {
   const catalogue = items
     .map(
@@ -57,7 +60,7 @@ function buildPrompt(
     gender === 'female' || gender === 'male'
       ? ` The wearer is a ${gender === 'female' ? 'woman' : 'man'} — prefer cuts and fits suited to them.`
       : '';
-  return `You are a practical fashion stylist. Pick ONE outfit from the catalogue below.
+  return `You are a practical fashion stylist. Pick ${count} DISTINCT outfits from the catalogue below${count > 1 ? ' — different hero tops so the options feel genuinely different' : ''}.
 
 Context: ${weather.tempC}C, rain ${weather.rainPct}%, dress code ${dress}, mood ${mood}.${wearer}
 ${excludeTopIds.length ? `Avoid reusing these top IDs: ${excludeTopIds.join(', ')}.` : ''}
@@ -66,7 +69,7 @@ Rules: exactly one top, one bottom, one pair of shoes (required). Add outerwear 
 Catalogue:
 ${catalogue}
 
-Reply with JSON only: {"top": "id", "bottom": "id", "shoes": "id", "outerwear": "id|null", "accessory": "id|null", "reasoning": ["short reason 1", "short reason 2", "short reason 3"]}`;
+Reply with JSON only: {"outfits": [{"top": "id", "bottom": "id", "shoes": "id", "outerwear": "id|null", "accessory": "id|null", "reasoning": ["short reason 1", "short reason 2"]}]}`;
 }
 
 Deno.serve(async (req) => {
@@ -101,6 +104,7 @@ Deno.serve(async (req) => {
       gender = 'prefer_not_to_say',
       excludeTopIds = [],
       regenerate = false,
+      count: requestedCount,
     } = await req.json();
     if (typeof weather?.tempC !== 'number' || typeof dress !== 'string' || typeof mood !== 'string') {
       return json({ error: 'weather.tempC, dress and mood are required' }, 400);
@@ -120,6 +124,11 @@ Deno.serve(async (req) => {
         403,
       );
     }
+    // Never trust the client count — the plan caps the options served.
+    const count = Math.min(
+      Math.max(typeof requestedCount === 'number' ? Math.floor(requestedCount) : plan.outfitOptions, 1),
+      plan.outfitOptions,
+    );
 
     const { data: items, error: itemsError } = await admin
       .from('wardrobe_items')
@@ -158,7 +167,7 @@ Deno.serve(async (req) => {
       return json(body, status);
     };
 
-    const prompt = buildPrompt(pool, weather, dress, mood, excludeTopIds, gender);
+    const prompt = buildPrompt(pool, weather, dress, mood, excludeTopIds, gender, count);
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
       {
@@ -178,12 +187,17 @@ Deno.serve(async (req) => {
     }
     const gemini = await geminiRes.json();
     const text: string = gemini.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-    let picks: Record<string, string | null>;
+    let rawPicks: unknown;
     try {
-      picks = JSON.parse(text);
+      rawPicks = JSON.parse(text);
     } catch {
       return fail({ error: 'stylist returned a bad pick, try again' }, 502);
     }
+    const candidates: Record<string, string | null>[] = Array.isArray(
+      (rawPicks as { outfits?: unknown }).outfits,
+    )
+      ? (rawPicks as { outfits: Record<string, string | null>[] }).outfits
+      : [];
 
     const byId = new Map(pool.map((i) => [i.id, i]));
     const need: [slot: string, category: string, required: boolean][] = [
@@ -193,37 +207,50 @@ Deno.serve(async (req) => {
       ['outerwear', 'outerwear', false],
       ['accessory', 'accessory', false],
     ];
-    const itemIds: string[] = [];
-    for (const [slot, category, required] of need) {
-      const id = picks[slot];
-      if (typeof id === 'string' && byId.get(id)?.category === category) {
-        itemIds.push(id);
-      } else if (required) {
-        return fail({ error: 'stylist returned a bad pick, try again' }, 502);
+    const seenTops = new Set<string>();
+    const outfits: { outfitId: string; itemIds: string[]; reasoning: string[] }[] = [];
+    for (const picks of candidates) {
+      if (outfits.length >= count) break;
+      const itemIds: string[] = [];
+      let valid = true;
+      for (const [slot, category, required] of need) {
+        const id = picks[slot];
+        if (typeof id === 'string' && byId.get(id)?.category === category) {
+          itemIds.push(id);
+        } else if (required) {
+          valid = false;
+          break;
+        }
       }
+      const topId = itemIds[0];
+      if (!valid || seenTops.has(topId)) continue;
+      seenTops.add(topId);
+      const reasoning = Array.isArray(picks.reasoning)
+        ? picks.reasoning.filter((r): r is string => typeof r === 'string').slice(0, 4)
+        : ['Styled for your day'];
+      const { data: outfit, error: insertError } = await admin
+        .from('outfits')
+        .insert({
+          user_id: user.id,
+          item_ids: itemIds,
+          weather_summary: weather,
+          event_summary: dress,
+          mood,
+          is_saved: false,
+        })
+        .select('id')
+        .single();
+      if (insertError || !outfit) {
+        console.error('[generate-outfit] insert', insertError);
+        return fail({ error: 'something went wrong' }, 500);
+      }
+      outfits.push({ outfitId: outfit.id, itemIds, reasoning });
     }
-    const reasoning = Array.isArray(picks.reasoning)
-      ? picks.reasoning.filter((r): r is string => typeof r === 'string').slice(0, 4)
-      : ['Styled for your day'];
-
-    const { data: outfit, error: insertError } = await admin
-      .from('outfits')
-      .insert({
-        user_id: user.id,
-        item_ids: itemIds,
-        weather_summary: weather,
-        event_summary: dress,
-        mood,
-        is_saved: false,
-      })
-      .select('id')
-      .single();
-    if (insertError || !outfit) {
-      console.error('[generate-outfit] insert', insertError);
-      return fail({ error: 'something went wrong' }, 500);
+    if (outfits.length === 0) {
+      return fail({ error: 'stylist returned a bad pick, try again' }, 502);
     }
 
-    return json({ outfitId: outfit.id, itemIds, reasoning, usage });
+    return json({ outfits, usage });
   } catch (e) {
     console.error('[generate-outfit]', e);
     await refund?.().catch((refundError) => console.error('[generate-outfit] refund', refundError));

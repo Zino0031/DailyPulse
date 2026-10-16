@@ -4,7 +4,8 @@ import { usePlan } from '@/hooks/useSubscription';
 import { buildRenderPrompt, buildRenderUrl } from '@/services/aiRender';
 import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
 import type { OutfitBoard, OutfitContext } from '@/services/outfit';
-import { RENDER_SIZE, type RenderQuality } from '@/supabase/functions/_shared/tiers';
+import { LIMIT_ERRORS, RENDER_SIZE, type RenderQuality } from '@/supabase/functions/_shared/tiers';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 
 function seedFromKey(key: string): number {
   let hash = 0;
@@ -45,6 +46,8 @@ export function useAiRender(
   const [working, setWorking] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [previewCapped, setPreviewCapped] = useState(false);
+  const [previewUsage, setPreviewUsage] = useState<{ used: number; limit: number | null } | null>(null);
 
   // Switching boards resets to the photo view — a fresh tap re-renders.
   useEffect(() => {
@@ -54,6 +57,7 @@ export function useAiRender(
     setWorking(false);
     setLoaded(false);
     setFailed(false);
+    setPreviewCapped(false);
   }, [board?.key]);
 
   const generate = useCallback(async () => {
@@ -101,6 +105,24 @@ export function useAiRender(
             setRemoteUrl(result.renderUrl);
             setRemoteQuality(result.quality ?? 'standard');
           }
+          if (result && typeof result === 'object' && 'usage' in result) {
+            const usage = (result as { usage?: { used: number; limit: number | null } }).usage;
+            if (usage) setPreviewUsage(usage);
+          }
+          if (error instanceof FunctionsHttpError) {
+            const body = (await error.context.json().catch(() => null)) as {
+              code?: string;
+            } | null;
+            // Preview budget spent: fall through to the keyless render
+            // below — the photo board stays as final fallback.
+            if (
+              error.context.status === 429 ||
+              body?.code === LIMIT_ERRORS.dailyLimit ||
+              body?.code === LIMIT_ERRORS.previewLimit
+            ) {
+              setPreviewCapped(true);
+            }
+          }
         }
       } catch {
         // falls through to the keyless URL below
@@ -118,6 +140,9 @@ export function useAiRender(
     engine: remoteUrl ? ('cf' as const) : null,
     /** What was actually delivered (the server may fall back to standard). */
     quality: remoteUrl ? (remoteQuality ?? 'standard') : planQuality,
+    /** True once the server refused a preview for budget reasons. */
+    previewCapped,
+    previewUsage,
     generate,
     onLoad: () => setLoaded(true),
     onError: () => setFailed(true),
