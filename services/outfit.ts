@@ -1,8 +1,4 @@
-import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
-import type {
-  Tier,
-  WardrobeItemRow,
-} from '@/types/database';
+import type { WardrobeItemRow } from '@/types/database';
 import type { Mood } from '@/store/useUserPreferencesStore';
 import type { DressCode } from '@/services/calendar';
 
@@ -26,12 +22,8 @@ export interface OutfitBoard {
   reasons: string[];
   /** Which engine styled it — shown as a badge for honesty. */
   source: 'local' | 'ai';
-}
-
-export interface Allowance {
-  allowed: boolean;
-  remaining: number;
-  tier: Tier;
+  /** `outfits` row the AI pick already created (saving flips is_saved). */
+  outfitId?: string;
 }
 
 // Formality compatibility: exact match scores highest.
@@ -200,38 +192,4 @@ export function composeOutfits(
     }
   }
   return boards;
-}
-
-/**
- * Tier daily caps, enforced against real rows when the backend is linked
- * (Free 1/day, Plus 5/day, Pro unlimited). Open in dev preview.
- */
-export async function checkAllowance(): Promise<Allowance> {
-  const open: Allowance = { allowed: true, remaining: Infinity, tier: 'free' };
-  if (!isSupabaseConfigured()) return open;
-  try {
-    const supabase = getSupabase();
-    const { data } = await supabase.auth.getUser();
-    const user = data.user;
-    if (!user) return open;
-    const { data: profile } = await supabase
-      .from('users')
-      .select('tier')
-      .eq('id', user.id)
-      .maybeSingle();
-    const tier = (profile?.tier ?? 'free') as Tier;
-    if (tier === 'pro') return { allowed: true, remaining: Infinity, tier };
-    const limit = tier === 'plus' ? 5 : 1;
-    const dayStart = new Date();
-    dayStart.setHours(0, 0, 0, 0);
-    const { count } = await supabase
-      .from('outfits')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id)
-      .gte('created_at', dayStart.toISOString());
-    const used = count ?? 0;
-    return { allowed: used < limit, remaining: Math.max(0, limit - used), tier };
-  } catch {
-    return open;
-  }
 }

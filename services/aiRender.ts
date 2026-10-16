@@ -1,4 +1,5 @@
 import type { OutfitBoard, OutfitContext } from '@/services/outfit';
+import { RENDER_SIZE } from '@/supabase/functions/_shared/tiers';
 
 // Free keyless AI imagery (Pollinations, no signup). This renders an
 // ILLUSTRATIVE preview — a stylized person wearing the described outfit —
@@ -32,10 +33,11 @@ export function buildRenderUrl(
   prompt: string,
   seed: number,
   referenceImages: string[],
+  size: { width: number; height: number } = RENDER_SIZE.standard,
 ): string {
   const params = new URLSearchParams({
-    width: '768',
-    height: '1024',
+    width: String(size.width),
+    height: String(size.height),
     seed: String(seed),
     nologo: 'true',
   });

@@ -1,16 +1,20 @@
+import { useQueryClient } from '@tanstack/react-query';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useDominantDressCode } from '@/hooks/useCalendarEvents';
 import { useProfile } from '@/hooks/useProfile';
+import { subscriptionKeys, useGenerationUsage, usePlan } from '@/hooks/useSubscription';
 import { useUserPreferencesStore } from '@/store/useUserPreferencesStore';
 import { useWardrobe } from '@/hooks/useWardrobe';
 import { useWeather } from '@/hooks/useWeather';
 import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
+import { useAuthStore } from '@/store/useAuthStore';
+import { showPaywall } from '@/store/usePaywallStore';
+import { LIMIT_ERRORS, usageDay } from '@/supabase/functions/_shared/tiers';
 import type { WardrobeItemRow } from '@/types/database';
 import {
-  checkAllowance,
   composeOutfits,
-  type Allowance,
   type OutfitBoard,
   type OutfitContext,
 } from '@/services/outfit';
@@ -30,19 +34,36 @@ export interface SavedOutfit {
 }
 
 /**
- * Remote AI pick with local fallback. Returns null when the function is
- * undeployed/unreachable (offline preview keeps working); throws CAPPED
- * when the server enforces the daily tier limit — callers must NOT fall
- * back to local compose in that case.
+ * The server refused for plan reasons. Callers must NOT fall back to the
+ * local composer — that would quietly bypass the tier limit.
  */
-const CAPPED = Symbol('capped');
+class PlanLimitError extends Error {
+  constructor(
+    readonly reason: 'daily_limit' | 'regenerate',
+    readonly used: number | null,
+  ) {
+    super(reason);
+  }
+}
+
 const REMOTE_TIMEOUT_MS = 25000;
 
+interface RemoteResult {
+  boards: OutfitBoard[];
+  used: number | null;
+}
+
+/**
+ * Remote AI pick. Returns null when the function is undeployed or
+ * unreachable (the offline composer takes over); throws PlanLimitError
+ * when the daily cap or the regenerate lock applies.
+ */
 async function remoteCompose(
   ctx: OutfitContext,
   items: WardrobeItemRow[],
   excludeTopIds: string[],
-): Promise<OutfitBoard[] | null> {
+  regenerate: boolean,
+): Promise<RemoteResult | null> {
   if (!isSupabaseConfigured()) return null;
   const supabase = getSupabase();
   const { data } = await supabase.auth.getSession();
@@ -51,7 +72,7 @@ async function remoteCompose(
     outfitId: string;
     itemIds: string[];
     reasoning: string[];
-    capped?: boolean;
+    usage?: { used: number; limit: number | null };
   }>('generate-outfit', {
     body: {
       weather: { tempC: ctx.tempC, rainPct: ctx.rainPct },
@@ -59,6 +80,7 @@ async function remoteCompose(
       mood: ctx.mood,
       gender: ctx.gender,
       excludeTopIds,
+      regenerate,
     },
   });
   const timeout = new Promise<never>((_, reject) =>
@@ -71,8 +93,19 @@ async function remoteCompose(
     return null;
   }
   if (result.error) {
-    const status = (result.error as { status?: number }).status;
-    if (status === 429 || result.data?.capped) throw CAPPED;
+    if (result.error instanceof FunctionsHttpError) {
+      const response = result.error.context as Response;
+      const body = (await response.json().catch(() => null)) as {
+        code?: string;
+        usage?: { used?: number };
+      } | null;
+      if (response.status === 429 || body?.code === LIMIT_ERRORS.dailyLimit) {
+        throw new PlanLimitError('daily_limit', body?.usage?.used ?? null);
+      }
+      if (body?.code === LIMIT_ERRORS.regenerateLocked) {
+        throw new PlanLimitError('regenerate', null);
+      }
+    }
     return null;
   }
   const picks = result.data;
@@ -82,50 +115,32 @@ async function remoteCompose(
     .map((id) => byId.get(id))
     .filter((i): i is WardrobeItemRow => Boolean(i));
   if (!top || !bottom || !shoes) return null;
-  return [
-    {
-      key: `ai-${picks.outfitId}`,
-      top,
-      bottom,
-      shoes,
-      outerwear:
-        rest.find((i) => i.category === 'outerwear') ?? null,
-      accessory:
-        rest.find((i) => i.category === 'accessory') ?? null,
-      score: 0,
-      reasons: picks.reasoning.slice(0, 4),
-      source: 'ai',
-    },
-  ];
+  return {
+    used: picks.usage?.used ?? null,
+    boards: [
+      {
+        key: `ai-${picks.outfitId}`,
+        top,
+        bottom,
+        shoes,
+        outerwear: rest.find((i) => i.category === 'outerwear') ?? null,
+        accessory: rest.find((i) => i.category === 'accessory') ?? null,
+        score: 0,
+        reasons: picks.reasoning.slice(0, 4),
+        source: 'ai',
+        outfitId: picks.outfitId,
+      },
+    ],
+  };
 }
 
-/**
- * Generate → preview → save/unsave → regenerate flow for the outfit route.
- * AI edge function first (#14), on-device composer as fallback — screen
- * code doesn't care which produced the boards.
- */
-export function useOutfit() {
-  const {
-    data: items = [],
-    isLoading: wardrobeLoading,
-    isError: wardrobeError,
-    refetch: retryLoad,
-  } = useWardrobe();
+/** Weather + calendar + mood + wearer — what the stylist and renders use. */
+export function useOutfitContext(): OutfitContext {
   const { data: weather } = useWeather();
   const mood = useUserPreferencesStore((s) => s.mood) ?? 'neutral';
   const dress = useDominantDressCode() ?? 'casual';
   const { data: profile } = useProfile();
-
-  const [runId, setRunId] = useState(0);
-  const [stage, setStage] = useState(0);
-  const [allowance, setAllowance] = useState<Allowance | null>(null);
-  const [saved, setSaved] = useState<SavedOutfit | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [boards, setBoards] = useState<OutfitBoard[]>([]);
-  const [boardsPending, setBoardsPending] = useState(true);
-  const seenTops = useRef<string[]>([]);
-
-  const ctx: OutfitContext = useMemo(
+  return useMemo(
     () => ({
       tempC: weather?.current.temperatureC ?? 20,
       rainPct: weather?.today.precipitationProbabilityMaxPct ?? 0,
@@ -135,6 +150,64 @@ export function useOutfit() {
     }),
     [weather, dress, mood, profile],
   );
+}
+
+/** Deletes a saved outfit row (the read-only saved view's "Remove"). */
+export function useRemoveOutfit() {
+  const [removing, setRemoving] = useState(false);
+  async function remove(outfitId: string): Promise<void> {
+    if (!isSupabaseConfigured()) return;
+    setRemoving(true);
+    try {
+      await getSupabase().from('outfits').delete().eq('id', outfitId);
+    } finally {
+      setRemoving(false);
+    }
+  }
+  return { remove, removing };
+}
+
+/** Why Regenerate can't run right now; null = it can. */
+export type RegenerateLock = 'plan' | 'limit' | null;
+
+/**
+ * Generate → preview → save/unsave → regenerate flow for the outfit route.
+ * AI edge function first (#14), on-device composer as fallback — screen
+ * code doesn't care which produced the boards. Plan limits (#17) come from
+ * the server; hitting one opens the paywall instead of failing silently.
+ */
+export function useOutfit() {
+  const {
+    data: items = [],
+    isLoading: wardrobeLoading,
+    isError: wardrobeError,
+    refetch: retryLoad,
+  } = useWardrobe();
+  const ctx = useOutfitContext();
+  const { plan } = usePlan();
+  const usage = useGenerationUsage();
+  const queryClient = useQueryClient();
+  const userId = useAuthStore((s) => s.user?.id ?? null);
+  const { remove, removing } = useRemoveOutfit();
+
+  const [runId, setRunId] = useState(0);
+  const [stage, setStage] = useState(0);
+  const [blocked, setBlocked] = useState<PlanLimitError['reason'] | null>(null);
+  const [saved, setSaved] = useState<SavedOutfit | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [boards, setBoards] = useState<OutfitBoard[]>([]);
+  const [boardsPending, setBoardsPending] = useState(true);
+  const seenTops = useRef<string[]>([]);
+  // Read inside the generation effect without re-running it on every
+  // usage refetch (a finished generation must not trigger another).
+  const atLimitRef = useRef(usage.atLimit);
+  atLimitRef.current = usage.atLimit;
+
+  const setUsed = (used: number | null) => {
+    const key = subscriptionKeys.usage(userId, usageDay());
+    if (used === null) void queryClient.invalidateQueries({ queryKey: key });
+    else queryClient.setQueryData<number>(key, used);
+  };
 
   // Staged progress UI with a minimum dwell per stage (NFR feel target).
   useEffect(() => {
@@ -147,10 +220,6 @@ export function useOutfit() {
     return () => timers.forEach(clearTimeout);
   }, [runId, wardrobeLoading]);
 
-  useEffect(() => {
-    checkAllowance().then(setAllowance);
-  }, [runId]);
-
   // AI first, local composer as fallback. Runs per generation; the staged
   // progress UI keeps covering while either path resolves.
   useEffect(() => {
@@ -159,25 +228,40 @@ export function useOutfit() {
       setBoardsPending(wardrobeLoading);
       return;
     }
+    // Wait for today's usage so a capped user isn't sent to the server.
+    if (usage.isLoading) {
+      setBoardsPending(true);
+      return;
+    }
+    if (atLimitRef.current) {
+      setBlocked('daily_limit');
+      if (runId === 0) setBoards([]);
+      setBoardsPending(false);
+      return;
+    }
     let cancelled = false;
     setBoardsPending(true);
     (async () => {
       try {
-        const remote = await remoteCompose(ctx, items, seenTops.current);
+        const remote = await remoteCompose(ctx, items, seenTops.current, runId > 0);
         if (cancelled) return;
-        if (remote && remote.length > 0) {
-          seenTops.current = [...seenTops.current, remote[0].top.id].slice(-6);
-          setBoards(remote);
+        if (remote && remote.boards.length > 0) {
+          seenTops.current = [...seenTops.current, remote.boards[0].top.id].slice(-6);
+          setBoards(remote.boards);
+          setUsed(remote.used);
         } else {
           setBoards(composeOutfits(items, ctx, runId));
         }
       } catch (e) {
         if (cancelled) return;
-        if (e === CAPPED) {
-          setAllowance((prev) =>
-            prev ? { ...prev, allowed: false, remaining: 0 } : prev,
-          );
-          setBoards([]);
+        if (e instanceof PlanLimitError) {
+          setBlocked(e.reason);
+          if (e.reason === 'daily_limit') {
+            setUsed(e.used);
+            // A first run has nothing to show; a refused regenerate keeps
+            // the current look on screen.
+            if (runId === 0) setBoards([]);
+          }
         } else {
           setBoards(composeOutfits(items, ctx, runId));
         }
@@ -189,18 +273,38 @@ export function useOutfit() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, wardrobeLoading, items.length]);
+  }, [runId, wardrobeLoading, items.length, usage.isLoading]);
+
+  // Paywall triggers on cap (issue #17) — once per refusal.
+  useEffect(() => {
+    if (blocked) showPaywall(blocked);
+  }, [blocked]);
 
   const generating =
     wardrobeLoading || boardsPending || stage < GENERATION_STAGES.length - 1;
   const emptyCloset = !wardrobeLoading && items.length === 0;
-  const capped = allowance !== null && !allowance.allowed;
+  const capped = blocked === 'daily_limit' && boards.length === 0;
+  const regenerateLock: RegenerateLock = !plan.canRegenerate
+    ? 'plan'
+    : usage.atLimit
+      ? 'limit'
+      : null;
 
   async function save(board: OutfitBoard): Promise<string | null> {
     if (!isSupabaseConfigured()) return null;
     setSaving(true);
     try {
       const supabase = getSupabase();
+      // AI picks already have a row — flip it instead of duplicating it.
+      if (board.outfitId) {
+        const { error } = await supabase
+          .from('outfits')
+          .update({ is_saved: true })
+          .eq('id', board.outfitId);
+        if (error) return null;
+        setSaved({ id: board.outfitId, isSaved: true });
+        return board.outfitId;
+      }
       const { data } = await supabase.auth.getUser();
       const user = data.user;
       if (!user) return null;
@@ -238,10 +342,15 @@ export function useOutfit() {
       setSaved(null);
       return;
     }
+    // A generated row stays (it's the AI pick on screen) — only unflag it.
+    if (!boards.some((b) => b.outfitId === outfitId)) {
+      await remove(outfitId);
+      setSaved(null);
+      return;
+    }
     setSaving(true);
     try {
-      const supabase = getSupabase();
-      await supabase.from('outfits').delete().eq('id', outfitId);
+      await getSupabase().from('outfits').update({ is_saved: false }).eq('id', outfitId);
       setSaved(null);
     } finally {
       setSaving(false);
@@ -249,7 +358,12 @@ export function useOutfit() {
   }
 
   function regenerate() {
+    if (regenerateLock) {
+      showPaywall(regenerateLock === 'plan' ? 'regenerate' : 'daily_limit');
+      return;
+    }
     setSaved(null);
+    setBlocked(null);
     setRunId((n) => n + 1);
   }
 
@@ -261,9 +375,11 @@ export function useOutfit() {
     wardrobeError,
     retryLoad,
     capped,
-    allowance,
+    usage,
+    plan,
+    regenerateLock,
     saved,
-    saving,
+    saving: saving || removing,
     save,
     unsave,
     regenerate,
