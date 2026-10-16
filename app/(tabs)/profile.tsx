@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AvatarPreview } from "@/components/avatar/AvatarPreview";
 import { StatusNote } from "@/components/closet/StatusNote";
+import { PlanSection } from "@/components/subscription/PlanSection";
 import { Button } from "@/components/ui/Button";
 import { ConfirmSheet } from "@/components/ui/Sheet";
 import { GENDER_LABEL, STYLE_LABEL } from "@/constants/profile";
@@ -128,15 +129,6 @@ export default function ProfileScreen() {
             loading={isPending}
           />
           <DetailRow
-            label="Plan"
-            value={
-              profile
-                ? profile.tier.charAt(0).toUpperCase() + profile.tier.slice(1)
-                : null
-            }
-            loading={isPending}
-          />
-          <DetailRow
             label="Member since"
             value={
               profile ? new Date(profile.created_at).toLocaleDateString() : null
@@ -145,6 +137,8 @@ export default function ProfileScreen() {
             last
           />
         </View>
+
+        <PlanSection />
 
         {profile !== undefined && (
           <Button
@@ -203,16 +197,18 @@ function DetailRow({
 }) {
   return (
     <View
-      className={`flex-row items-center justify-between px-4 py-3.5 ${last ? "" : "border-b border-border"}`}
+      className={`flex-row items-center justify-between gap-4 px-4 py-3.5 ${last ? "" : "border-b border-border"}`}
     >
-      <Text className="text-callout text-text-muted">{label}</Text>
+      <Text className="shrink-0 text-callout text-text-muted">{label}</Text>
       {value === null && loading ? (
         <View
           className="h-4 w-24 rounded bg-border"
           accessibilityLabel={`Loading ${label}`}
         />
       ) : (
-        <Text className="text-callout text-text">{value ?? "—"}</Text>
+        <Text className="flex-1 text-right text-callout text-text">
+          {value ?? "—"}
+        </Text>
       )}
     </View>
   );

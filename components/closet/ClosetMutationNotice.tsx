@@ -11,7 +11,9 @@ import {
   type DeleteItemVariables,
   type UpdateItemVariables,
 } from '@/hooks/useCloset';
+import { showPaywall } from '@/store/usePaywallStore';
 import { friendlyError } from '@/utils/errors';
+import { isClosetFullError } from '@/utils/subscription';
 
 import { StatusNote } from './StatusNote';
 
@@ -43,6 +45,32 @@ export function ClosetMutationNotice() {
   let message: string;
   let retry: () => void;
   let onDismiss = forget;
+
+  // The database refused the insert because the plan's closet is full —
+  // retrying can't help, upgrading can.
+  if (key === closetMutationKeys.add[1] && isClosetFullError(latest.state.error)) {
+    const vars = variables as AddItemVariables;
+    const discard = () => {
+      forget();
+      void discardDraftPhoto(vars.imagePath);
+    };
+    return (
+      <StatusNote
+        testID="closet-mutation-notice"
+        tone="warning"
+        message={`Your closet is full, so we couldn't save your ${CATEGORY_LABEL[vars.tags.category].one.toLowerCase()}.`}
+        action={{
+          label: 'See plans',
+          hint: 'Compares plans with more closet space',
+          onPress: () => {
+            discard();
+            showPaywall('closet_full');
+          },
+        }}
+        onDismiss={discard}
+      />
+    );
+  }
 
   if (key === closetMutationKeys.add[1]) {
     const vars = variables as AddItemVariables;

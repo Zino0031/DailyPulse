@@ -1,4 +1,5 @@
 import { Link, router, useLocalSearchParams } from 'expo-router';
+import { Lock } from 'lucide-react-native';
 import { useState } from 'react';
 import {
   ActivityIndicator,
@@ -9,7 +10,17 @@ import {
 } from 'react-native';
 
 import { OutfitCard } from '@/components/outfit/OutfitCard';
-import { GENERATION_STAGES, useOutfit, useSavedOutfit } from '@/hooks/useOutfit';
+import { Button } from '@/components/ui/Button';
+import {
+  GENERATION_STAGES,
+  useOutfit,
+  useOutfitContext,
+  useRemoveOutfit,
+  useSavedOutfit,
+} from '@/hooks/useOutfit';
+import { useThemeTokens } from '@/hooks/useThemeTokens';
+import { showPaywall } from '@/store/usePaywallStore';
+import { generationsLine } from '@/utils/subscription';
 
 // TODO (#14): route Generate CTA here with id=new once the edge function
 // lands; the local composer below swaps out without touching this screen.
@@ -25,7 +36,9 @@ export default function OutfitDetailScreen() {
 
 function SavedOutfitView({ id }: { id: string }) {
   const { board, isLoading, isError } = useSavedOutfit(id);
-  const { unsave, saving, ctx } = useOutfit();
+  // Context only — useOutfit() would start (and spend) a new generation.
+  const ctx = useOutfitContext();
+  const { remove, removing: saving } = useRemoveOutfit();
 
   return (
     <ScrollView
@@ -47,7 +60,7 @@ function SavedOutfitView({ id }: { id: string }) {
             accessibilityLabel="Remove this outfit"
             disabled={saving}
             onPress={async () => {
-              await unsave(id);
+              await remove(id);
               router.back();
             }}
             className="h-11 items-center justify-center rounded-full border border-border bg-surface px-6">
@@ -70,6 +83,9 @@ function GenerateFlow() {
     wardrobeError,
     retryLoad,
     capped,
+    usage,
+    plan,
+    regenerateLock,
     saved,
     saving,
     save,
@@ -77,6 +93,7 @@ function GenerateFlow() {
     regenerate,
     ctx,
   } = useOutfit();
+  const tokens = useThemeTokens();
   const [selected, setSelected] = useState(0);
   const hero = boards[Math.min(selected, boards.length - 1)];
 
@@ -87,7 +104,7 @@ function GenerateFlow() {
       <Text className="text-title-1 font-bold text-text">
         Today&apos;s outfits
       </Text>
-      <View className="flex-row gap-2">
+      <View className="flex-row flex-wrap gap-2">
         <View className="rounded-full bg-surface px-3 py-1.5 shadow-sm">
           <Text className="text-caption font-medium text-text-muted">
             {Math.round(ctx.tempC)}°
@@ -108,14 +125,20 @@ function GenerateFlow() {
       {generating && <LoadingCard label={stage} />}
 
       {!generating && capped && (
-        <View className="rounded-xl bg-surface p-5 shadow-md">
-          <Text className="text-title-3 font-semibold text-text">
-            Daily limit reached
+        <View testID="outfit-capped" className="rounded-xl bg-surface p-5 shadow-md">
+          <Text accessibilityRole="header" className="text-title-3 font-semibold text-text">
+            {plan.dailyGenerations === 1
+              ? "You've used today's AI outfit"
+              : "You've used today's AI outfits"}
           </Text>
-          <Text className="mt-1 text-footnote text-text-muted">
-            Free tier includes 1 generation a day — back tomorrow, or upgrade
-            for more.
+          <Text className="mb-4 mt-1 text-footnote text-text-muted">
+            {generationsLine(plan, usage)} Saved looks stay in your history.
           </Text>
+          <Button
+            label="See plans"
+            onPress={() => showPaywall('daily_limit')}
+            accessibilityHint="Compares plans with more AI outfits a day"
+          />
         </View>
       )}
 
@@ -203,15 +226,34 @@ function GenerateFlow() {
               </Pressable>
             )}
             <Pressable
+              testID="outfit-regenerate"
               accessibilityRole="button"
               accessibilityLabel="Regenerate outfits"
+              accessibilityHint={
+                regenerateLock === 'plan'
+                  ? 'Regenerate needs Plus or Pro — shows the plans'
+                  : regenerateLock === 'limit'
+                    ? "No AI outfits left today — shows the plans"
+                    : 'Styles a fresh set of options'
+              }
               onPress={() => {
-                setSelected(0);
+                if (!regenerateLock) setSelected(0);
                 regenerate();
               }}
-              className="h-11 items-center justify-center rounded-full border border-border bg-surface px-6">
+              className="h-11 flex-row items-center justify-center gap-2 rounded-full border border-border bg-surface px-6">
+              {regenerateLock && (
+                <Lock size={16} strokeWidth={1.75} color={tokens.textMuted} />
+              )}
               <Text className="text-headline text-text">Regenerate</Text>
+              {regenerateLock === 'plan' && (
+                <View className="rounded-full bg-primary-tint px-2 py-0.5">
+                  <Text className="text-caption font-semibold text-primary">Plus</Text>
+                </View>
+              )}
             </Pressable>
+            <Text testID="outfit-usage" className="text-center text-caption text-text-muted">
+              {generationsLine(plan, usage)}
+            </Text>
           </View>
         </>
       )}

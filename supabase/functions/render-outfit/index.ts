@@ -1,6 +1,8 @@
 // render-outfit — AI try-on imagery over Hugging Face Inference Providers.
 // POST { outfitId?: string, items?: WardrobeItem[], ctx: OutfitContext, seed?: number }
-//   -> { renderUrl, engine: 'hf-flux' } | 503 { engine: 'unavailable' }
+//   -> { renderUrl, engine, quality: 'standard' | 'hd' } | 503 { engine: 'unavailable' }
+// Output size follows the caller's tier (Pro = HD) — read server-side,
+// never from the request (supabase/functions/_shared/tiers.ts).
 //
 // render-outfit — AI try-on imagery. Engine order: Cloudflare FLUX.1-schnell
 // (free: 10k neurons/day ≈ 100+ renders, no card) → HF router (needs credits).
@@ -15,6 +17,7 @@
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 
+import { planFor, RENDER_SIZE } from '../_shared/tiers.ts';
 import { isOwnPath, isRemoteUrl } from '../_shared/wardrobeTags.ts';
 
 // Ordered fallback chain — providers retire models regularly (FLUX.1-schnell
@@ -112,6 +115,7 @@ async function renderViaKlein(
   apiToken: string,
   items: RenderItem[],
   ctx: RenderCtx,
+  size: { width: number; height: number },
 ): Promise<ArrayBuffer | null> {
   const refs: { bytes: ArrayBuffer; mime: string; label: string }[] = [];
   console.log(
@@ -140,8 +144,8 @@ async function renderViaKlein(
   try {
     const form = new FormData();
     form.append('prompt', prompt);
-    form.append('width', '768');
-    form.append('height', '1024');
+    form.append('width', String(size.width));
+    form.append('height', String(size.height));
     refs.forEach((ref, i) => {
       form.append(
         `input_image_${i}`,
@@ -317,6 +321,13 @@ Deno.serve(async (req) => {
       return json({ error: 'items and ctx (or outfitId) are required' }, 400);
     }
 
+    const { data: profile } = await admin
+      .from('users')
+      .select('tier')
+      .eq('id', user.id)
+      .maybeSingle();
+    const quality = planFor(profile?.tier).renderQuality;
+
     const prompt = buildPrompt(items, promptCtx);
     // Free engines first: klein multi-reference → schnell text → HF router
     // (needs credits). Anything failing falls through to the next.
@@ -325,7 +336,7 @@ Deno.serve(async (req) => {
     let imageBytes: ArrayBuffer | null = null;
     let engine = 'cf-klein';
     if (accountId && apiToken) {
-      imageBytes = await renderViaKlein(admin, accountId, apiToken, items, promptCtx);
+      imageBytes = await renderViaKlein(admin, accountId, apiToken, items, promptCtx, RENDER_SIZE[quality]);
     }
     if (!imageBytes) {
       imageBytes = await renderViaCloudflare(prompt, seed);
@@ -351,6 +362,8 @@ Deno.serve(async (req) => {
                   body: JSON.stringify({
                     inputs: prompt,
                     parameters: {
+                      width: RENDER_SIZE[quality].width,
+                      height: RENDER_SIZE[quality].height,
                       guidance_scale: model.guidance,
                       num_inference_steps: model.steps,
                       seed,
@@ -399,7 +412,12 @@ Deno.serve(async (req) => {
         .eq('id', outfitId)
         .eq('user_id', user.id);
     }
-    return json({ renderUrl: signed.signedUrl, engine });
+    // schnell ignores size params — report what was actually delivered.
+    return json({
+      renderUrl: signed.signedUrl,
+      engine,
+      quality: engine === 'cf-flux' ? 'standard' : quality,
+    });
   } catch (e) {
     console.error('[render-outfit]', e);
     return new Response(JSON.stringify({ error: 'something went wrong' }), {

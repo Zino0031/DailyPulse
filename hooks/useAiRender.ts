@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { usePlan } from '@/hooks/useSubscription';
 import { buildRenderPrompt, buildRenderUrl } from '@/services/aiRender';
 import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
 import type { OutfitBoard, OutfitContext } from '@/services/outfit';
+import { RENDER_SIZE, type RenderQuality } from '@/supabase/functions/_shared/tiers';
 
 function seedFromKey(key: string): number {
   let hash = 0;
@@ -24,16 +26,21 @@ export function useAiRender(
   board: OutfitBoard | undefined,
   ctx: OutfitContext,
 ) {
+  // Pro previews render in HD; the server applies the same rule itself.
+  const { plan } = usePlan();
+  const planQuality = plan.renderQuality;
   const fallbackUrl = useMemo(() => {
     if (!board) return null;
     return buildRenderUrl(
       buildRenderPrompt(board, ctx),
       seedFromKey(board.key),
       [board.top.image_url, board.bottom.image_url, board.shoes.image_url],
+      RENDER_SIZE[planQuality],
     );
-  }, [board, ctx]);
+  }, [board, ctx, planQuality]);
 
   const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
+  const [remoteQuality, setRemoteQuality] = useState<RenderQuality | null>(null);
   const [started, setStarted] = useState(false);
   const [working, setWorking] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -42,6 +49,7 @@ export function useAiRender(
   // Switching boards resets to the photo view — a fresh tap re-renders.
   useEffect(() => {
     setRemoteUrl(null);
+    setRemoteQuality(null);
     setStarted(false);
     setWorking(false);
     setLoaded(false);
@@ -67,7 +75,10 @@ export function useAiRender(
             board.outerwear,
             board.accessory,
           ].filter((i) => i !== null);
-          const call = supabase.functions.invoke<{ renderUrl?: string }>(
+          const call = supabase.functions.invoke<{
+            renderUrl?: string;
+            quality?: RenderQuality;
+          }>(
             'render-outfit',
             {
               body: {
@@ -86,7 +97,10 @@ export function useAiRender(
             setTimeout(() => reject(new Error('timeout')), REMOTE_TIMEOUT_MS),
           );
           const { data: result, error } = await Promise.race([call, timeout]);
-          if (!error && result?.renderUrl) setRemoteUrl(result.renderUrl);
+          if (!error && result?.renderUrl) {
+            setRemoteUrl(result.renderUrl);
+            setRemoteQuality(result.quality ?? 'standard');
+          }
         }
       } catch {
         // falls through to the keyless URL below
@@ -102,6 +116,8 @@ export function useAiRender(
     started,
     isLoading: working || (Boolean(url) && !loaded && !failed),
     engine: remoteUrl ? ('cf' as const) : null,
+    /** What was actually delivered (the server may fall back to standard). */
+    quality: remoteUrl ? (remoteQuality ?? 'standard') : planQuality,
     generate,
     onLoad: () => setLoaded(true),
     onError: () => setFailed(true),

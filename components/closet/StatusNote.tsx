@@ -1,9 +1,9 @@
-import { CircleAlert, Sparkles, WifiOff } from 'lucide-react-native';
+import { CircleAlert, CircleCheck, Info, Sparkles, TriangleAlert, WifiOff } from 'lucide-react-native';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 
 import { BRAND } from '@/hooks/useThemeTokens';
 
-type Tone = 'busy' | 'ai' | 'error' | 'offline';
+type Tone = 'busy' | 'ai' | 'error' | 'offline' | 'info' | 'success' | 'warning';
 
 interface StatusNoteProps {
   tone: Tone;
@@ -18,6 +18,9 @@ const SURFACE: Record<Tone, string> = {
   ai: 'bg-primary/10',
   error: 'bg-danger/10',
   offline: 'bg-warning/10',
+  info: 'bg-surface border border-border',
+  success: 'bg-success/10',
+  warning: 'bg-warning/10',
 };
 
 /**
@@ -35,6 +38,9 @@ export function StatusNote({ tone, message, action, onDismiss, testID }: StatusN
       {tone === 'ai' && <Sparkles size={18} strokeWidth={1.75} color={BRAND.primary} />}
       {tone === 'error' && <CircleAlert size={18} strokeWidth={1.75} color={BRAND.danger} />}
       {tone === 'offline' && <WifiOff size={18} strokeWidth={1.75} color={BRAND.warning} />}
+      {tone === 'info' && <Info size={18} strokeWidth={1.75} color={BRAND.primary} />}
+      {tone === 'success' && <CircleCheck size={18} strokeWidth={1.75} color={BRAND.success} />}
+      {tone === 'warning' && <TriangleAlert size={18} strokeWidth={1.75} color={BRAND.warning} />}
       <Text className="flex-1 text-footnote text-text">
         {message}
       </Text>

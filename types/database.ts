@@ -1,5 +1,5 @@
 // Database types for the Supabase client (supabase-js).
-// Mirrors supabase/migrations/20260325000000_init.sql + docs/ARCHITECTURE.md §3.
+// Mirrors supabase/migrations/*.sql + docs/ARCHITECTURE.md §3.
 // Regenerate from a linked project with:
 //   supabase gen types typescript --linked > types/database.ts
 // and keep these hand-written literals in sync afterwards.
@@ -8,7 +8,9 @@
 // infers through `Row extends Record<string, unknown>` and interfaces
 // silently collapse single()/maybeSingle() results to `never`.
 
-export type Tier = 'free' | 'plus' | 'pro';
+import type { Tier } from '@/supabase/functions/_shared/tiers';
+
+export type { Tier };
 export type WardrobeCategory =
   | 'top'
   | 'bottom'
@@ -68,9 +70,22 @@ export type SubscriptionRow = {
   id: string;
   user_id: string;
   revenuecat_customer_id: string | null;
-  status: string;
+  tier: Tier;
+  status: 'active' | 'expired' | 'none';
+  product_id: string | null;
+  store: string | null;
+  environment: 'sandbox' | 'production' | null;
+  will_renew: boolean;
   expires_at: string | null;
+  updated_at: string;
   created_at: string;
+};
+
+/** Daily AI generation counter (UTC `day`); written by edge functions only. */
+export type GenerationUsageRow = {
+  user_id: string;
+  day: string;
+  used: number;
 };
 
 export interface Database {
@@ -105,6 +120,12 @@ export interface Database {
         Row: SubscriptionRow;
         Insert: Partial<SubscriptionRow> & Pick<SubscriptionRow, 'user_id'>;
         Update: Partial<SubscriptionRow>;
+        Relationships: [];
+      };
+      generation_usage: {
+        Row: GenerationUsageRow;
+        Insert: GenerationUsageRow;
+        Update: Partial<GenerationUsageRow>;
         Relationships: [];
       };
     };

@@ -5,11 +5,13 @@ import { Pressable, Text, View } from 'react-native';
 import { AvatarPreview } from '@/components/avatar/AvatarPreview';
 import { useAiRender } from '@/hooks/useAiRender';
 import { useClosetItem } from '@/hooks/useCloset';
+import { showPaywall } from '@/store/usePaywallStore';
 import { isRemoteUrl } from '@/services/closet';
 import type { OutfitBoard, OutfitContext } from '@/services/outfit';
 import type { WardrobeItemRow } from '@/types/database';
 
-function ItemPhoto({ item, size }: { item: WardrobeItemRow; size: number }) {
+/** `size` = fixed square; omitted = fills its share of the row (no overflow on narrow phones). */
+function ItemPhoto({ item, size }: { item: WardrobeItemRow; size?: number }) {
   // `image_url` is a private storage path for uploaded items; the closet
   // cache holds the signed URL (also covers saved outfits read from the DB).
   const { item: cached } = useClosetItem(item.id);
@@ -17,7 +19,11 @@ function ItemPhoto({ item, size }: { item: WardrobeItemRow; size: number }) {
   return (
     <Image
       source={uri ? { uri, cacheKey: item.image_url } : null}
-      style={{ width: size, height: size, borderRadius: 12 }}
+      style={
+        size === undefined
+          ? { flex: 1, aspectRatio: 1, maxWidth: 120, borderRadius: 12 }
+          : { width: size, height: size, borderRadius: 12 }
+      }
       className="bg-border"
       cachePolicy="memory-disk"
       contentFit="cover"
@@ -75,14 +81,32 @@ export function OutfitCard({
               accessibilityLabel="AI style preview of this outfit"
             />
           </View>
-          <View className="mt-2 flex-row items-center justify-between">
+          <View className="mt-2 flex-row flex-wrap items-center gap-2">
             <View className="rounded-full bg-primary-tint px-2 py-0.5">
               <Text className="text-caption font-medium text-primary">
                 AI preview · illustrative
               </Text>
             </View>
+            {render.quality === 'hd' ? (
+              <View className="rounded-full bg-primary px-2 py-0.5">
+                <Text className="text-caption font-semibold text-white">HD</Text>
+              </View>
+            ) : (
+              <Pressable
+                testID="outfit-hd-upsell"
+                onPress={() => showPaywall('hd')}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Standard quality. Get HD previews with Pro"
+                accessibilityHint="Shows the Pro plan"
+                className="rounded-full border border-border px-2 py-0.5">
+                <Text className="text-caption font-medium text-text-muted">
+                  Standard · <Text className="text-primary">HD with Pro</Text>
+                </Text>
+              </Pressable>
+            )}
             {render.isLoading && (
-              <Text className="text-caption text-text-subtle">
+              <Text className="ml-auto text-caption text-text-subtle">
                 Rendering…
               </Text>
             )}
@@ -114,9 +138,9 @@ export function OutfitCard({
         </View>
       </View>
       <View className="mt-4 flex-row gap-2">
-        <ItemPhoto item={board.top} size={96} />
-        <ItemPhoto item={board.bottom} size={96} />
-        <ItemPhoto item={board.shoes} size={96} />
+        <ItemPhoto item={board.top} />
+        <ItemPhoto item={board.bottom} />
+        <ItemPhoto item={board.shoes} />
       </View>
       {extras.length > 0 && (
         <View className="mt-2 flex-row gap-2">

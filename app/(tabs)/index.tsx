@@ -7,7 +7,9 @@ import { MoodSelector } from '@/components/home/MoodSelector';
 import { SchedulePreview } from '@/components/home/SchedulePreview';
 import { useDeviceLocation } from '@/hooks/useLocation';
 import { useProfileDetails } from '@/hooks/useProfile';
+import { useGenerationUsage, usePlan } from '@/hooks/useSubscription';
 import { DEFAULT_COORDINATES } from '@/services/weather';
+import { generationsLine } from '@/utils/subscription';
 
 // TODO (Epic 5 — Daily Home): replace with the full morning-workflow layout
 // (weather + top event + mood selector + Generate CTA). This minimal screen
@@ -22,6 +24,8 @@ export default function HomeScreen() {
       : null;
   const effective = coordinates ?? saved ?? DEFAULT_COORDINATES;
   const usingGps = status === 'granted';
+  const { plan } = usePlan();
+  const usage = useGenerationUsage();
 
   return (
     <ScrollView
@@ -76,16 +80,22 @@ export default function HomeScreen() {
       <View className="mt-8">
         <SchedulePreview />
       </View>
-      <Link href="/outfit/new" asChild>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Generate today's outfits"
-          className="mb-8 mt-8 h-[52px] items-center justify-center rounded-full bg-primary px-6 shadow-md">
-          <Text className="text-headline text-white">
-            Generate today&apos;s outfits
-          </Text>
-        </Pressable>
-      </Link>
+      <View className="mb-8 mt-8 gap-2">
+        <Link href="/outfit/new" asChild>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Generate today's outfits"
+            accessibilityHint={generationsLine(plan, usage)}
+            className="h-[52px] items-center justify-center rounded-full bg-primary px-6 shadow-md">
+            <Text className="text-headline text-white">
+              Generate today&apos;s outfits
+            </Text>
+          </Pressable>
+        </Link>
+        <Text testID="home-generation-usage" className="text-center text-caption text-text-muted">
+          {generationsLine(plan, usage)}
+        </Text>
+      </View>
     </ScrollView>
   );
 }

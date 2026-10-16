@@ -1,6 +1,8 @@
 // generate-outfit — Epic 5 outfit picker (#14).
-// POST { weather: { tempC, rainPct }, dress, mood, excludeTopIds?: string[] }
-//   -> { outfitId, itemIds, reasoning } | 429 { capped: true }
+// POST { weather: { tempC, rainPct }, dress, mood, excludeTopIds?: string[], regenerate?: boolean }
+//   -> { outfitId, itemIds, reasoning, usage: { used, limit } }
+//    | 429 { capped: true, code: 'daily_limit', usage }
+//    | 403 { locked: true, code: 'regenerate_locked' }
 //
 // Auth: caller JWT (anon key). Gemini key lives in function secrets:
 //   supabase secrets set GEMINI_API_KEY=<key from https://aistudio.google.com>
@@ -11,13 +13,22 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
+import { LIMIT_ERRORS, planFor } from '../_shared/tiers.ts';
+
 const GEMINI_MODEL = 'gemini-3.8-flash';
-const TIER_LIMITS: Record<string, number> = { free: 1, plus: 5, pro: Infinity };
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+/** Row returned by public.consume_generation(). */
+interface SpendRow {
+  allowed: boolean;
+  used: number;
+  daily_limit: number | null;
+  tier: string;
+}
 
 interface WardrobeRow {
   id: string;
@@ -26,12 +37,6 @@ interface WardrobeRow {
   colors: string[];
   formality: string;
   season: string[];
-}
-
-function dayStartIso(): string {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
 }
 
 function buildPrompt(
@@ -74,6 +79,9 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
+  // Set once a generation is spent; any later failure gives it back.
+  let refund: (() => Promise<unknown>) | null = null;
+
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -86,7 +94,14 @@ Deno.serve(async (req) => {
     const user = userData.user;
     if (!user) return json({ error: 'sign in required' }, 401);
 
-    const { weather, dress, mood, gender = 'prefer_not_to_say', excludeTopIds = [] } = await req.json();
+    const {
+      weather,
+      dress,
+      mood,
+      gender = 'prefer_not_to_say',
+      excludeTopIds = [],
+      regenerate = false,
+    } = await req.json();
     if (typeof weather?.tempC !== 'number' || typeof dress !== 'string' || typeof mood !== 'string') {
       return json({ error: 'weather.tempC, dress and mood are required' }, 400);
     }
@@ -98,17 +113,12 @@ Deno.serve(async (req) => {
       .select('tier')
       .eq('id', user.id)
       .maybeSingle();
-    const tier = (profile?.tier ?? 'free') as string;
-    const limit = TIER_LIMITS[tier] ?? 1;
-    if (limit !== Infinity) {
-      const { count } = await admin
-        .from('outfits')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .gte('created_at', dayStartIso());
-      if ((count ?? 0) >= limit) {
-        return json({ capped: true, tier, error: 'daily generation limit reached' }, 429);
-      }
+    const plan = planFor(profile?.tier);
+    if (regenerate === true && !plan.canRegenerate) {
+      return json(
+        { locked: true, code: LIMIT_ERRORS.regenerateLocked, tier: plan.id, error: 'regenerate needs Plus or Pro' },
+        403,
+      );
     }
 
     const { data: items, error: itemsError } = await admin
@@ -123,9 +133,32 @@ Deno.serve(async (req) => {
       return json({ error: 'not enough wardrobe items (need top, bottom, shoes)' }, 422);
     }
 
-    const prompt = buildPrompt(pool, weather, dress, mood, excludeTopIds, gender);
     const geminiKey = Deno.env.get('GEMINI_API_KEY');
     if (!geminiKey) return json({ error: 'AI not configured' }, 503);
+
+    // Atomic check-and-spend (supabase/migrations/20261016000000_subscriptions.sql).
+    // Anything failing after this point refunds the generation.
+    const { data: spend, error: spendError } = await admin
+      .rpc('consume_generation', { p_user: user.id })
+      .single<SpendRow>();
+    if (spendError || !spend) throw spendError ?? new Error('usage check failed');
+    const usage = { used: spend.used, limit: spend.daily_limit };
+    if (!spend.allowed) {
+      return json(
+        { capped: true, code: LIMIT_ERRORS.dailyLimit, tier: plan.id, usage, error: 'daily generation limit reached' },
+        429,
+      );
+    }
+    refund = async () => {
+      await admin.rpc('refund_generation', { p_user: user.id });
+    };
+    const fail = async (body: unknown, status: number) => {
+      await refund?.();
+      refund = null;
+      return json(body, status);
+    };
+
+    const prompt = buildPrompt(pool, weather, dress, mood, excludeTopIds, gender);
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
       {
@@ -141,7 +174,7 @@ Deno.serve(async (req) => {
       },
     );
     if (!geminiRes.ok) {
-      return json({ error: 'stylist unavailable, try again' }, 502);
+      return fail({ error: 'stylist unavailable, try again' }, 502);
     }
     const gemini = await geminiRes.json();
     const text: string = gemini.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
@@ -149,7 +182,7 @@ Deno.serve(async (req) => {
     try {
       picks = JSON.parse(text);
     } catch {
-      return json({ error: 'stylist returned a bad pick, try again' }, 502);
+      return fail({ error: 'stylist returned a bad pick, try again' }, 502);
     }
 
     const byId = new Map(pool.map((i) => [i.id, i]));
@@ -166,7 +199,7 @@ Deno.serve(async (req) => {
       if (typeof id === 'string' && byId.get(id)?.category === category) {
         itemIds.push(id);
       } else if (required) {
-        return json({ error: 'stylist returned a bad pick, try again' }, 502);
+        return fail({ error: 'stylist returned a bad pick, try again' }, 502);
       }
     }
     const reasoning = Array.isArray(picks.reasoning)
@@ -185,11 +218,15 @@ Deno.serve(async (req) => {
       })
       .select('id')
       .single();
-    if (insertError || !outfit) throw insertError ?? new Error('insert failed');
+    if (insertError || !outfit) {
+      console.error('[generate-outfit] insert', insertError);
+      return fail({ error: 'something went wrong' }, 500);
+    }
 
-    return json({ outfitId: outfit.id, itemIds, reasoning });
+    return json({ outfitId: outfit.id, itemIds, reasoning, usage });
   } catch (e) {
     console.error('[generate-outfit]', e);
+    await refund?.().catch((refundError) => console.error('[generate-outfit] refund', refundError));
     return new Response(JSON.stringify({ error: 'something went wrong' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

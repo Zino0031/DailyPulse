@@ -5,9 +5,12 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import ClosetScreen from '@/app/(tabs)/closet';
 import { closetKeys, closetMutationKeys } from '@/hooks/useCloset';
+import { profileKeys } from '@/hooks/useProfile';
 import * as closet from '@/services/closet';
 import type { ClosetItem } from '@/services/closet';
 import { useAuthStore } from '@/store/useAuthStore';
+import { usePaywallStore } from '@/store/usePaywallStore';
+import type { Tier } from '@/types/database';
 
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
@@ -64,7 +67,13 @@ beforeEach(() => {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   useAuthStore.setState({ user: { id: USER } as never, isLoading: false });
+  usePaywallStore.setState({ reason: null });
 });
+
+function onPlan(tier: Tier) {
+  client.setQueryData(profileKeys.details(USER), { tier } as never);
+}
+const many = (n: number) => Array.from({ length: n }, (_, i) => item(`i${i}`));
 afterEach(() => client.clear());
 
 it('asks signed-out users to sign in instead of showing an empty grid', async () => {
@@ -88,14 +97,15 @@ it('filters by category with live counts and a helpful filtered-empty state', as
   client.setQueryData(KEY, [item('t1'), item('t2'), item('s1', { category: 'shoes' })]);
   await renderScreen();
 
-  expect(screen.getByText('3 items')).toBeTruthy();
+  // Free plan: the count is shown against the 50-item capacity.
+  expect(screen.getByText('3 of 50 items')).toBeTruthy();
   expect(screen.getByLabelText('All, 3 items')).toBeTruthy();
   expect(screen.getByLabelText('Shoes, 1 item')).toBeTruthy();
 
   await fireEvent.press(screen.getByTestId('closet-filter-shoes'));
   expect(screen.getByTestId('closet-item-s1')).toBeTruthy();
   expect(screen.queryByTestId('closet-item-t1')).toBeNull();
-  expect(screen.getByText('3 items · showing 1 shoes')).toBeTruthy();
+  expect(screen.getByText('3 of 50 items · showing 1 shoes')).toBeTruthy();
 
   await fireEvent.press(screen.getByTestId('closet-filter-bottom'));
   expect(screen.getByText('No bottoms yet')).toBeTruthy();
@@ -150,4 +160,76 @@ it('reports a failed optimistic delete with retry, and dismiss clears it', async
 
   await fireEvent.press(screen.getByLabelText('Dismiss message'));
   await waitFor(() => expect(screen.queryByTestId('closet-mutation-notice')).toBeNull());
+});
+
+describe('plan capacity (issue #17)', () => {
+  it('warns near the Free cap but still lets the user add', async () => {
+    client.setQueryData(KEY, many(45));
+    await renderScreen();
+
+    expect(screen.getByText('5 closet spots left on Free.')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('closet-add'));
+    expect(usePaywallStore.getState().reason).toBeNull();
+    // The source picker opened instead.
+    expect(screen.getByText('Add to your closet')).toBeTruthy();
+  });
+
+  it('opens the paywall instead of the picker when the closet is full', async () => {
+    client.setQueryData(KEY, many(50));
+    await renderScreen();
+
+    expect(screen.getByText('Your closet is full — Free holds 50 items.')).toBeTruthy();
+    expect(screen.getByTestId('closet-add').props.accessibilityHint).toMatch(/full on Free/);
+    await fireEvent.press(screen.getByTestId('closet-add'));
+    expect(usePaywallStore.getState().reason).toBe('closet_full');
+    expect(screen.queryByText('Add to your closet')).toBeNull();
+  });
+
+  it('keeps items after a downgrade and explains the overflow', async () => {
+    client.setQueryData(KEY, many(72));
+    await renderScreen();
+    expect(
+      screen.getByText('You have 72 items — Free holds 50. Everything stays; upgrade to add more.'),
+    ).toBeTruthy();
+    await fireEvent.press(screen.getByLabelText('See plans'));
+    expect(usePaywallStore.getState().reason).toBe('closet_full');
+  });
+
+  it('shows no cap on Pro', async () => {
+    onPlan('pro');
+    client.setQueryData(KEY, many(300));
+    await renderScreen();
+    expect(screen.getByText('300 items')).toBeTruthy();
+    expect(screen.queryByTestId('closet-capacity-notice')).toBeNull();
+  });
+
+  it('turns a server closet_full rejection into an upgrade prompt, not a retry', async () => {
+    const vars = {
+      photo: { uri: 'file://p.jpg', width: 1, height: 1 },
+      imagePath: `${USER}/new.jpg`,
+      tags: { category: 'shoes', colors: [], formality: 'casual', season: [], fabric: '', pattern: '' },
+    };
+    client.setQueryData(KEY, [item('t1')]);
+    api.fetchClosetItems.mockResolvedValue([item('t1')]);
+    await renderScreen();
+
+    await act(async () => {
+      await client
+        .getMutationCache()
+        .build(client, {
+          mutationKey: closetMutationKeys.add,
+          mutationFn: () => Promise.reject({ code: 'P0001', message: 'closet_full' }),
+        })
+        .execute(vars)
+        .catch(() => undefined);
+    });
+
+    expect(
+      await screen.findByText("Your closet is full, so we couldn't save your shoes."),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText('Retry')).toBeNull();
+    await fireEvent.press(screen.getByLabelText('See plans'));
+    expect(usePaywallStore.getState().reason).toBe('closet_full');
+    expect(api.removeClosetPhoto).toHaveBeenCalledWith(`${USER}/new.jpg`);
+  });
 });

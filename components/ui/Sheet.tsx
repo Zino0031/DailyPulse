@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Modal, Pressable, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -13,6 +13,12 @@ interface SheetProps {
   title: string;
   description?: string;
   children?: ReactNode;
+  /**
+   * Long content (e.g. the paywall): caps the panel below the status bar
+   * and scrolls the body instead of pushing it off-screen.
+   */
+  scrollable?: boolean;
+  testID?: string;
 }
 
 /**
@@ -20,8 +26,18 @@ interface SheetProps {
  * Built on RN `Modal`, so Android back, VoiceOver focus trapping and web
  * all behave — unlike `Alert.alert`, which is a no-op on web.
  */
-export function Sheet({ visible, onClose, onDismiss, title, description, children }: SheetProps) {
+export function Sheet({
+  visible,
+  onClose,
+  onDismiss,
+  title,
+  description,
+  children,
+  scrollable = false,
+  testID,
+}: SheetProps) {
   const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
   return (
     <Modal
       visible={visible}
@@ -30,28 +46,53 @@ export function Sheet({ visible, onClose, onDismiss, title, description, childre
       statusBarTranslucent
       onRequestClose={onClose}
       onDismiss={onDismiss}>
-      <Animated.View entering={FadeIn.duration(250)} className="flex-1 justify-end bg-black/40">
-        <Pressable
-          className="absolute inset-0"
-          onPress={onClose}
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-          accessibilityHint="Dismisses this panel"
-        />
-        <Animated.View
-          entering={SlideInDown.duration(350)}
-          accessibilityViewIsModal
-          className="w-full max-w-xl self-center rounded-t-2xl bg-surface-elevated px-6 pt-2 shadow-lg"
-          style={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}>
-          <View className="mb-4 h-1 w-9 self-center rounded-full bg-border" />
-          <Text accessibilityRole="header" className="text-title-3 font-semibold text-text">
-            {title}
-          </Text>
-          {description ? (
-            <Text className="mt-1 text-footnote text-text-muted">{description}</Text>
-          ) : null}
-          <View className="mt-5">{children}</View>
-        </Animated.View>
+      {/* Reanimated views only animate (inline styles): NativeWind doesn't
+          style them, so every className lives on a plain View inside. */}
+      <Animated.View entering={FadeIn.duration(250)} style={{ flex: 1 }}>
+        <View className="flex-1 justify-end bg-black/40">
+          <Pressable
+            className="absolute inset-0"
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            accessibilityHint="Dismisses this panel"
+          />
+          <Animated.View
+            entering={SlideInDown.duration(350)}
+            style={{
+              width: '100%',
+              alignItems: 'center',
+              ...(scrollable ? { maxHeight: height - insets.top - 16 } : null),
+            }}>
+            <View
+              testID={testID}
+              accessibilityViewIsModal
+              className="w-full max-w-xl rounded-t-2xl bg-surface-elevated px-6 pt-2 shadow-lg"
+              style={{
+                paddingBottom: Math.max(insets.bottom, 16) + 8,
+                ...(scrollable ? { maxHeight: '100%' } : null),
+              }}>
+              <View className="mb-4 h-1 w-9 self-center rounded-full bg-border" />
+              <Text accessibilityRole="header" className="text-title-3 font-semibold text-text">
+                {title}
+              </Text>
+              {description ? (
+                <Text className="mt-1 text-footnote text-text-muted">{description}</Text>
+              ) : null}
+              {scrollable ? (
+                <ScrollView
+                  className="mt-5 shrink grow-0"
+                  bounces={false}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator>
+                  {children}
+                </ScrollView>
+              ) : (
+                <View className="mt-5">{children}</View>
+              )}
+            </View>
+          </Animated.View>
+        </View>
       </Animated.View>
     </Modal>
   );
