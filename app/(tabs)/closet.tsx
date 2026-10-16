@@ -12,11 +12,14 @@ import { StatusNote } from '@/components/closet/StatusNote';
 import { Button } from '@/components/ui/Button';
 import { CATEGORY_LABEL } from '@/constants/wardrobe';
 import { useClosetItems } from '@/hooks/useCloset';
+import { useClosetCapacity, usePlan } from '@/hooks/useSubscription';
 import { BRAND } from '@/hooks/useThemeTokens';
 import type { ClosetItem, LocalPhoto } from '@/services/closet';
 import { useAuthStore } from '@/store/useAuthStore';
+import { showPaywall } from '@/store/usePaywallStore';
 import { countByCategory, filterItems, type CategoryFilter as Filter } from '@/utils/closet';
 import { friendlyError, isNetworkError } from '@/utils/errors';
+import { closetNotice } from '@/utils/subscription';
 
 /** Digital wardrobe (PRD §3.2): browse, filter, add, edit, delete. */
 export default function ClosetScreen() {
@@ -29,6 +32,9 @@ export default function ClosetScreen() {
   const items = useMemo(() => data ?? [], [data]);
   const counts = useMemo(() => countByCategory(items), [items]);
   const visible = useMemo(() => filterItems(items, filter), [items, filter]);
+  const { plan } = usePlan();
+  const capacity = useClosetCapacity();
+  const capacityNote = data ? closetNotice(plan, items.length) : null;
 
   const openItem = useCallback((item: ClosetItem) => {
     router.push({ pathname: '/item/[id]', params: { id: item.id } });
@@ -42,16 +48,26 @@ export default function ClosetScreen() {
     });
   };
 
+  // At capacity the paywall explains why instead of a save that would fail.
   const openAdd = () => {
     setPickError(null);
+    if (capacity.atLimit) {
+      showPaywall('closet_full');
+      return;
+    }
     setAddOpen(true);
   };
+  const addHint = capacity.atLimit
+    ? `Your closet is full on ${plan.name} — shows plans with more room`
+    : 'Take or choose a photo of a clothing item';
 
   const subtitle = !data
     ? 'Your digital wardrobe'
     : items.length === 0
       ? 'Add your first piece to get outfit ideas'
-      : `${items.length} ${items.length === 1 ? 'item' : 'items'}${
+      : `${capacity.limit === null ? items.length : `${items.length} of ${capacity.limit}`} ${
+          items.length === 1 && capacity.limit === null ? 'item' : 'items'
+        }${
           filter === 'all' ? '' : ` · showing ${counts[filter]} ${CATEGORY_LABEL[filter].many.toLowerCase()}`
         }`;
 
@@ -71,7 +87,7 @@ export default function ClosetScreen() {
             icon={Plus}
             size="sm"
             onPress={openAdd}
-            accessibilityHint="Take or choose a photo of a clothing item"
+            accessibilityHint={addHint}
           />
         )}
       </View>
@@ -90,6 +106,18 @@ export default function ClosetScreen() {
                 : "Couldn't refresh your closet — showing what was saved."
             }
             action={{ label: 'Retry', onPress: () => refetch(), hint: 'Reloads your closet' }}
+          />
+        )}
+        {capacityNote && (
+          <StatusNote
+            tone="warning"
+            testID="closet-capacity-notice"
+            message={capacityNote}
+            action={{
+              label: 'See plans',
+              onPress: () => showPaywall(capacity.atLimit ? 'closet_full' : 'upgrade'),
+              hint: 'Compares plans with more closet space',
+            }}
           />
         )}
         <ClosetMutationNotice />
