@@ -27,6 +27,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/hooks/useAuth';
+import { useProfileDetails } from '@/hooks/useProfile';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -124,7 +125,8 @@ const DEV_BYPASS_AUTH = process.env.EXPO_PUBLIC_BYPASS_AUTH === 'true';
 
 /**
  * Holds the splash screen until boot finishes, then enforces the auth gate:
- * signed-out users live in `(auth)`, signed-in users are sent to `(tabs)`.
+ * signed-out users live in `(auth)`, signed-in users are sent to `(tabs)` —
+ * or to `onboarding` until `users.onboarded_at` is set (issue #5).
  */
 function BootGate({
   fontsLoaded,
@@ -136,14 +138,20 @@ function BootGate({
   const router = useRouter();
   const segments = useSegments();
   const { session, isLoading, isRecovering } = useAuth();
+  const profile = useProfileDetails();
 
   const ready = fontsLoaded && !isLoading;
+  // A failed read (offline, missing migration) never traps the user in
+  // onboarding — only a loaded row without `onboarded_at` sends them there.
+  const profileLoading = Boolean(session) && profile.isLoading;
+  const needsOnboarding =
+    Boolean(session) && profile.isSuccess && !profile.data?.onboarded_at;
 
   useEffect(() => {
-    if (ready) {
+    if (ready && !profileLoading) {
       SplashScreen.hideAsync();
     }
-  }, [ready]);
+  }, [ready, profileLoading]);
 
   useEffect(() => {
     if (!ready) return;
@@ -151,12 +159,18 @@ function BootGate({
     // screen stay mounted even though a (recovery) session exists.
     if (isRecovering) return;
     const inAuthGroup = segments[0] === '(auth)';
-    if (!session && !inAuthGroup) {
-      router.replace('/welcome' as Href);
-    } else if (session && inAuthGroup) {
+    if (!session) {
+      if (!inAuthGroup) router.replace('/welcome' as Href);
+      return;
+    }
+    // Stay put (sign-in screen / splash) until we know where to send them.
+    if (profileLoading) return;
+    if (needsOnboarding && segments[0] !== 'onboarding') {
+      router.replace('/onboarding');
+    } else if (!needsOnboarding && inAuthGroup) {
       router.replace('/(tabs)');
     }
-  }, [ready, session, segments, router, isRecovering]);
+  }, [ready, session, segments, router, isRecovering, profileLoading, needsOnboarding]);
 
   if (!ready) return null;
   return <>{children}</>;

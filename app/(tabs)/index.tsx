@@ -6,6 +6,7 @@ import { WeatherWidget } from '@/components/home/WeatherWidget';
 import { MoodSelector } from '@/components/home/MoodSelector';
 import { SchedulePreview } from '@/components/home/SchedulePreview';
 import { useDeviceLocation } from '@/hooks/useLocation';
+import { useProfileDetails } from '@/hooks/useProfile';
 import { DEFAULT_COORDINATES } from '@/services/weather';
 
 // TODO (Epic 5 — Daily Home): replace with the full morning-workflow layout
@@ -13,7 +14,13 @@ import { DEFAULT_COORDINATES } from '@/services/weather';
 // only proves the weather service + widget render end to end.
 export default function HomeScreen() {
   const { coordinates, placeLabel, status, blocked, retry } = useDeviceLocation();
-  const effective = coordinates ?? DEFAULT_COORDINATES;
+  const { data: profile } = useProfileDetails();
+  // GPS first, then the location saved in onboarding, then the default.
+  const saved =
+    profile?.location_lat != null && profile.location_lon != null
+      ? { latitude: Number(profile.location_lat), longitude: Number(profile.location_lon) }
+      : null;
+  const effective = coordinates ?? saved ?? DEFAULT_COORDINATES;
   const usingGps = status === 'granted';
 
   return (
@@ -36,12 +43,18 @@ export default function HomeScreen() {
       <Text className="mb-8 mt-1 text-footnote text-text-muted">
         {usingGps
           ? 'Weather for your current location.'
-          : 'Default area — tap the target icon for live GPS.'}
+          : saved
+            ? 'Weather for your saved location — tap the target icon for live GPS.'
+            : 'Default area — tap the target icon for live GPS.'}
       </Text>
       <WeatherWidget
         coordinates={effective}
         placeLabel={
-          usingGps ? (placeLabel ?? 'GPS location') : 'Default area'
+          usingGps
+            ? (placeLabel ?? 'GPS location')
+            : saved
+              ? (profile?.location_name ?? 'Saved location')
+              : 'Default area'
         }
         locationAction={
           status === 'loading'

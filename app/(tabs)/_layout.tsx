@@ -1,4 +1,4 @@
-import { Shirt, Sun } from 'lucide-react-native';
+import { CircleUser, Shirt, Sun } from 'lucide-react-native';
 import { SymbolView } from 'expo-symbols';
 import { Link, Tabs } from 'expo-router';
 import { Pressable } from 'react-native';
@@ -47,6 +47,15 @@ export default function TabLayout() {
           headerShown: false,
           tabBarAccessibilityLabel: 'Closet, your wardrobe items',
           tabBarIcon: ({ color }) => <Shirt size={26} strokeWidth={1.5} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profile',
+          headerShown: false,
+          tabBarAccessibilityLabel: 'Profile, your account and sign out',
+          tabBarIcon: ({ color }) => <CircleUser size={26} strokeWidth={1.5} color={color} />,
         }}
       />
     </Tabs>
