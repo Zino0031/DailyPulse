@@ -98,3 +98,63 @@ supabase functions deploy tryon-render
 The app intentionally does NOT call it; renders come from the keyless
 Pollinations engine with photo-board fallback. Revisit when there's render
 budget (natural Pro-tier perk: try-on costs per render).
+
+## Subscriptions — RevenueCat paywall + tier gating (issue #17)
+
+What enforces what:
+
+| Limit | Free | Plus | Pro | Enforced by |
+|---|---|---|---|---|
+| Closet items | 50 | 250 | unlimited | `enforce_closet_limit` trigger (insert fails with `closet_full`) |
+| AI outfits / day (UTC) | 1 | 5 | unlimited | `consume_generation()` in `generate-outfit` (429) |
+| Regenerate | — | ✓ | ✓ | `generate-outfit` (403 `regenerate_locked`) |
+| Preview quality | standard | standard | HD | `render-outfit` reads the tier |
+
+`users.tier` is only writable by the service role (trigger
+`users_guard_tier`), so the profile form can't self-upgrade anyone.
+
+### 1. RevenueCat dashboard (owner)
+
+1. Entitlements with these exact identifiers: **`plus`** and **`pro`**.
+2. Products whose identifiers contain `plus` / `pro` as a word, e.g.
+   `myoutfit_plus_monthly`, `myoutfit_pro_monthly` — the paywall matches
+   packages to tiers by that word. Attach each product to its entitlement.
+3. Put both packages in the **current** offering.
+4. Project settings → Integrations → **Webhooks**: URL
+   `https://<ref>.supabase.co/functions/v1/revenuecat-webhook`, and an
+   Authorization header value (a long random string — same as below).
+
+### 2. Deploy the webhook
+
+```bash
+supabase db push   # applies 20261016000000_subscriptions.sql
+supabase secrets set REVENUECAT_SECRET_API_KEY=<sk_… secret API key>
+supabase secrets set REVENUECAT_WEBHOOK_AUTH=<the header value from step 4>
+# RevenueCat sends its own Authorization header, so skip gateway JWT checks;
+# the function verifies the webhook secret or the user JWT itself.
+supabase functions deploy revenuecat-webhook --no-verify-jwt
+supabase functions deploy generate-outfit
+supabase functions deploy render-outfit
+```
+
+The function never trusts event fields: on every webhook (and when the app
+calls it right after a purchase / restore) it re-reads the subscriber from
+the RevenueCat REST API and writes `subscriptions` + `users.tier`. Retries
+and out-of-order events converge; dashboard TEST events return 200 and
+sync nothing.
+
+### 3. Test mode — no real charges
+
+1. RevenueCat → Project settings → API keys → copy the **Test Store** key (`test_…`).
+   Create test products for it with the same ids / entitlements as above.
+2. `.env`: `EXPO_PUBLIC_REVENUECAT_TEST_KEY=test_…` (wins over store keys).
+3. Works in Expo Go, web and dev builds. The paywall shows a "Test mode —
+   purchases are simulated" banner. Buy Plus → Profile shows Plus within
+   seconds; "Restore purchases" on a fresh install restores it.
+4. Verify server state in the SQL editor:
+   `select tier from users where id = '<uid>';`
+   `select * from subscriptions where user_id = '<uid>';`
+
+Real store sandbox testing (App Store sandbox / Play license testers) needs
+a development build (`eas build --profile development`) and the
+`EXPO_PUBLIC_REVENUECAT_IOS_KEY` / `_ANDROID_KEY` keys instead.
