@@ -1,4 +1,4 @@
-import { gridMetrics } from '../ClosetGrid';
+import { gridMetrics } from '@/utils/grid';
 
 describe('gridMetrics', () => {
   it('uses 2 columns on a small phone', () => {

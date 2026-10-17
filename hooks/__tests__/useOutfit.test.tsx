@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import OutfitDetailScreen from '@/app/outfit/[id]';
 import { closetKeys } from '@/hooks/useCloset';
+import { outfitKeys, type LastOutfit } from '@/hooks/useOutfit';
 import { profileKeys } from '@/hooks/useProfile';
 import { subscriptionKeys } from '@/hooks/useSubscription';
 import type { ClosetItem } from '@/services/closet';
@@ -188,4 +189,59 @@ it('never spends a generation when opening a saved outfit', async () => {
 
   expect(await screen.findByLabelText('Remove this outfit', {}, WAIT)).toBeTruthy();
   expect(mockInvoke).not.toHaveBeenCalled();
+});
+
+it('renders the cached last look offline without calling the stylist', async () => {
+  // Simulate what PersistQueryClientProvider rehydrates on a cold/offline launch.
+  const cached: LastOutfit = {
+    day: usageDay(),
+    boards: [
+      {
+        key: 'cached-1',
+        top: mockItems[0],
+        bottom: mockItems[1],
+        shoes: mockItems[2],
+        outerwear: null,
+        accessory: null,
+        score: 0,
+        reasons: ['Styled for your saved weather'],
+        source: 'ai',
+      },
+    ],
+  };
+  client.setQueryData<LastOutfit>(outfitKeys.last(USER), cached);
+
+  await renderScreen({ tier: 'free', used: 0 });
+
+  // Shown immediately — no staged-progress card, no network generation.
+  expect(await screen.findByText('AI styled')).toBeTruthy();
+  expect(screen.getByText('Styled for your saved weather')).toBeTruthy();
+  expect(mockInvoke).not.toHaveBeenCalled();
+  expect(usePaywallStore.getState().reason).toBeNull();
+});
+
+it('still generates when only an on-device look was cached', async () => {
+  // A local board is free to recompose — it must not lock the user out of AI.
+  client.setQueryData<LastOutfit>(outfitKeys.last(USER), {
+    day: usageDay(),
+    boards: [
+      {
+        key: 'local-1',
+        top: mockItems[0],
+        bottom: mockItems[1],
+        shoes: mockItems[2],
+        outerwear: null,
+        accessory: null,
+        score: 0,
+        reasons: ['On-device only'],
+        source: 'local',
+      },
+    ],
+  });
+  mockInvoke.mockResolvedValue(aiPick(1));
+
+  await renderScreen({ tier: 'free', used: 0 });
+
+  expect(await screen.findByText('AI styled', {}, WAIT)).toBeTruthy();
+  expect(mockInvoke).toHaveBeenCalledTimes(1);
 });

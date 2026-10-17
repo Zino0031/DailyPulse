@@ -1,0 +1,74 @@
+import { Image } from 'expo-image';
+import { Trash2 } from 'lucide-react-native';
+import { Pressable, Text, View } from 'react-native';
+
+import type { LookbookEntry } from '@/hooks/useLookbook';
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const day = (x: Date) => x.toDateString();
+  if (day(d) === day(today)) return 'Today';
+  if (day(d) === day(yesterday)) return 'Yesterday';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+interface LookbookTileProps {
+  entry: LookbookEntry;
+  /** Fixed tile width for virtualized grids; omit to fill the parent. */
+  width?: number;
+  onOpen: (entry: LookbookEntry) => void;
+  onDelete: (id: string) => void;
+}
+
+/**
+ * One saved look (issue #16). Shared by the profile preview and the full
+ * virtualized lookbook screen. Thumbnails cache by storage path (`cacheKey`)
+ * so rotating signed URLs never re-download — same rule as the closet grid.
+ */
+export function LookbookTile({ entry, width, onOpen, onDelete }: LookbookTileProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open saved look from ${formatDate(entry.createdAt)}`}
+      onPress={() => onOpen(entry)}
+      style={width === undefined ? undefined : { width }}
+      className={`relative${width === undefined ? ' w-full' : ''}`}>
+      {entry.thumbnailUrl ? (
+        <Image
+          source={{ uri: entry.thumbnailUrl, cacheKey: entry.thumbnailKey ?? undefined }}
+          recyclingKey={entry.id}
+          style={{ width: '100%', aspectRatio: 3 / 4, borderRadius: 12 }}
+          cachePolicy="memory-disk"
+          contentFit="cover"
+          transition={200}
+          priority="low"
+          enforceEarlyResizing
+        />
+      ) : (
+        <View
+          className="items-center justify-center rounded-xl bg-border"
+          style={{ width: '100%', aspectRatio: 3 / 4 }}>
+          <Text className="text-footnote text-text-muted">No preview</Text>
+        </View>
+      )}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Delete this saved look"
+        onPress={() => onDelete(entry.id)}
+        hitSlop={8}
+        className="absolute right-1 top-1 h-8 w-8 items-center justify-center rounded-full bg-danger shadow-sm">
+        <Trash2 size={14} strokeWidth={2} color="#FFFFFF" />
+      </Pressable>
+      <Text className="mt-1 text-footnote font-medium text-text">
+        {formatDate(entry.createdAt)}
+      </Text>
+      <Text numberOfLines={1} className="text-caption text-text-muted">
+        {[entry.mood, entry.dressCode].filter(Boolean).join(' · ') ||
+          `${entry.itemCount} pieces`}
+      </Text>
+    </Pressable>
+  );
+}

@@ -22,7 +22,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import { QueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { Paywall } from '@/components/subscription/Paywall';
@@ -30,6 +30,11 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfileDetails } from '@/hooks/useProfile';
 import { usePurchasesIdentity } from '@/hooks/useSubscription';
+import { perfMark, perfMeasure } from '@/utils/perf';
+import { PERSIST_BUSTER, shouldPersistQuery } from '@/utils/queryCache';
+
+// Module-eval timestamp for the dev cold-start log (utils/perf.ts).
+perfMark('boot');
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -53,8 +58,9 @@ const queryClient = new QueryClient({
   },
 });
 
-// Offline-readable cache (PRD §4): only the closet is persisted — weather
-// and calendar are cheap to refetch and go stale fast.
+// Offline-readable cache (PRD §4): wardrobe + last weather + last outfit are
+// persisted (see utils/queryCache.ts). Calendar, profile and usage are cheap
+// to refetch and go stale fast, so they stay in memory only.
 const persister = createAsyncStoragePersister({
   storage: AsyncStorage,
   key: 'myoutfit-query-cache',
@@ -83,11 +89,10 @@ export default function RootLayout() {
         persistOptions={{
           persister,
           maxAge: PERSIST_MAX_AGE_MS,
-          // Bump when the persisted ClosetItem shape changes.
-          buster: 'closet-v1',
+          // Bump when a persisted payload shape changes.
+          buster: PERSIST_BUSTER,
           dehydrateOptions: {
-            shouldDehydrateQuery: (query) =>
-              query.queryKey[0] === 'closet' && query.state.status === 'success',
+            shouldDehydrateQuery: shouldPersistQuery,
           },
         }}>
         <ThemeProvider
@@ -101,6 +106,7 @@ export default function RootLayout() {
                 options={{ headerShown: false }}
               />
               <Stack.Screen name="outfit" options={{ headerShown: false }} />
+              <Stack.Screen name="lookbook" options={{ headerShown: false }} />
               <Stack.Screen
                 name="item/new"
                 options={{ presentation: 'modal', title: 'New item' }}
@@ -152,9 +158,16 @@ function BootGate({
   const needsOnboarding =
     Boolean(session) && profile.isSuccess && !profile.data?.onboarded_at;
 
+  // Dev-only cold-start log (docs/PERFORMANCE.md).
+  const bootLogged = useRef(false);
+
   useEffect(() => {
     if (ready && !profileLoading) {
       SplashScreen.hideAsync();
+      if (!bootLogged.current) {
+        bootLogged.current = true;
+        perfMeasure('boot (module eval → first frame)', 'boot');
+      }
     }
   }, [ready, profileLoading]);
 
