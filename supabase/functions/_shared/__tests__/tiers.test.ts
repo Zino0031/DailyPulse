@@ -18,23 +18,29 @@ const NOW = new Date('2026-10-16T12:00:00.000Z');
 const FUTURE = '2026-11-16T12:00:00Z';
 const PAST = '2026-09-16T12:00:00Z';
 
-describe('plans (PRD §3.5 acceptance)', () => {
-  it('matches the issue: Free 50/1, Plus 250/5 + regenerate, Pro unlimited + HD', () => {
+describe('plans (PRD §3.5 acceptance, issue #42 budgets)', () => {
+  it('matches the issue: Free 1×1×1, Plus 3×3×5, Pro 20×5×20', () => {
     expect(PLANS.free).toMatchObject({
       itemLimit: 50,
       dailyGenerations: 1,
+      outfitOptions: 1,
+      dailyPreviews: 1,
       canRegenerate: false,
       renderQuality: 'standard',
     });
     expect(PLANS.plus).toMatchObject({
       itemLimit: 250,
-      dailyGenerations: 5,
+      dailyGenerations: 3,
+      outfitOptions: 3,
+      dailyPreviews: 5,
       canRegenerate: true,
       renderQuality: 'standard',
     });
     expect(PLANS.pro).toMatchObject({
       itemLimit: null,
-      dailyGenerations: null,
+      dailyGenerations: 20,
+      outfitOptions: 5,
+      dailyPreviews: 20,
       canRegenerate: true,
       renderQuality: 'hd',
     });
@@ -49,29 +55,35 @@ describe('plans (PRD §3.5 acceptance)', () => {
 
 describe('the SQL mirror of the limits', () => {
   const sql = readFileSync(
-    join(__dirname, '../../../migrations/20261016000000_subscriptions.sql'),
+    join(__dirname, '../../../migrations/20261017000000_tier_budgets.sql'),
     'utf8',
   );
   const fn = sql.slice(sql.indexOf('function public.tier_limits'), sql.indexOf('$$;'));
   const cases = [...fn.matchAll(/case p_tier when 'pro' then (\w+) when 'plus' then (\w+) else (\w+) end/g)];
   const num = (v: string) => (v === 'null' ? null : Number(v));
 
-  it('has exactly two limit columns', () => {
-    expect(cases).toHaveLength(2);
+  it('has exactly four limit columns', () => {
+    expect(cases).toHaveLength(4);
   });
 
-  it('enforces the same closet and daily generation limits as tiers.ts', () => {
-    const [items, generations] = cases;
-    expect([num(items[1]), num(items[2]), num(items[3])]).toEqual([
-      PLANS.pro.itemLimit,
-      PLANS.plus.itemLimit,
-      PLANS.free.itemLimit,
-    ]);
-    expect([num(generations[1]), num(generations[2]), num(generations[3])]).toEqual([
-      PLANS.pro.dailyGenerations,
-      PLANS.plus.dailyGenerations,
-      PLANS.free.dailyGenerations,
-    ]);
+  it('enforces the same budgets as tiers.ts', () => {
+    const [items, generations, options, previews] = cases;
+    const pro = [null, 20, 5, 20];
+    const plus = [250, 3, 3, 5];
+    const free = [50, 1, 1, 1];
+    const cols = [items, generations, options, previews];
+    const expected = [
+      [PLANS.pro.itemLimit, PLANS.plus.itemLimit, PLANS.free.itemLimit],
+      [PLANS.pro.dailyGenerations, PLANS.plus.dailyGenerations, PLANS.free.dailyGenerations],
+      [PLANS.pro.outfitOptions, PLANS.plus.outfitOptions, PLANS.free.outfitOptions],
+      [PLANS.pro.dailyPreviews, PLANS.plus.dailyPreviews, PLANS.free.dailyPreviews],
+    ];
+    expect(pro).toEqual([null, 20, 5, 20]);
+    expect(plus).toEqual([250, 3, 3, 5]);
+    expect(free).toEqual([50, 1, 1, 1]);
+    cols.forEach((col, i) => {
+      expect([num(col[1]), num(col[2]), num(col[3])]).toEqual(expected[i]);
+    });
   });
 });
 

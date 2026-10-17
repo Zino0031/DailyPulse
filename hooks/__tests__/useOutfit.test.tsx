@@ -74,11 +74,13 @@ function item(id: string, category: ClosetItem['category']): ClosetItem {
 }
 const mockItems = [item('t1', 'top'), item('b1', 'bottom'), item('s1', 'shoes')];
 
-const aiPick = (used: number) => ({
+const aiPick = (used: number, n = 1) => ({
   data: {
-    outfitId: 'o1',
-    itemIds: ['t1', 'b1', 's1'],
-    reasoning: ['Styled for 20°', 'Navy keeps it calm'],
+    outfits: Array.from({ length: n }, (_, i) => ({
+      outfitId: `o${i + 1}`,
+      itemIds: ['t1', 'b1', 's1'],
+      reasoning: ['Styled for 20°', 'Navy keeps it calm'],
+    })),
     usage: { used, limit: null },
   },
   error: null,
@@ -131,7 +133,7 @@ it('generates once, then shows the spent allowance and a locked Regenerate on Fr
     /^No AI outfits left today on Free\. More unlock (today|tomorrow) at /,
   );
 
-  // Free can't regenerate: the paywall explains, no second generation.
+  // Free sees a locked Regenerate: the paywall explains, no second generation.
   expect(screen.getByText('Plus')).toBeTruthy();
   await fireEvent.press(screen.getByTestId('outfit-regenerate'));
   expect(usePaywallStore.getState().reason).toBe('regenerate');
@@ -162,7 +164,7 @@ it('lets Plus regenerate and tells the server it is a regenerate', async () => {
   mockInvoke.mockResolvedValue(aiPick(2));
   await renderScreen({ tier: 'plus', used: 1 });
   await screen.findByText('AI styled', {}, WAIT);
-  expect(screen.getByTestId('outfit-usage').props.children).toBe('3 of 5 AI outfits left today.');
+  expect(screen.getByTestId('outfit-usage').props.children).toBe('1 of 3 AI outfits left today.');
   expect(screen.queryByText('Plus')).toBeNull();
 
   await fireEvent.press(screen.getByTestId('outfit-regenerate'));

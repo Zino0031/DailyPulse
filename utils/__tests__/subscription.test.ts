@@ -59,7 +59,7 @@ describe('paywallCopy', () => {
     expect(free.body).toContain(resetLabel(NOW));
 
     const plus = paywallCopy('daily_limit', 'plus', NOW);
-    expect(plus.title).toBe("You've used today's 5 AI outfits");
+    expect(plus.title).toBe("You've used today's 3 AI outfits");
     expect(plus.highlight).toBe('pro');
   });
 
@@ -95,9 +95,9 @@ describe('closetNotice', () => {
 describe('generationsLine', () => {
   it('reads naturally for every state', () => {
     expect(generationsLine(PLANS.free, allowanceOf(1, 0), NOW)).toBe('1 of 1 AI outfit left today.');
-    expect(generationsLine(PLANS.plus, allowanceOf(5, 2), NOW)).toBe('3 of 5 AI outfits left today.');
-    expect(generationsLine(PLANS.pro, allowanceOf(null, 40), NOW)).toBe(
-      'Unlimited AI outfits on Pro.',
+    expect(generationsLine(PLANS.plus, allowanceOf(3, 1), NOW)).toBe('2 of 3 AI outfits left today.');
+    expect(generationsLine(PLANS.pro, allowanceOf(20, 7), NOW)).toBe(
+      '13 of 20 AI outfits left today.',
     );
     expect(generationsLine(PLANS.free, allowanceOf(1, 1), NOW)).toBe(
       `No AI outfits left today on Free. More unlock ${resetLabel(NOW)}.`,

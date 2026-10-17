@@ -78,6 +78,9 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
+  // Set once a preview is spent (below); any later failure gives it back.
+  let refundPreview: () => Promise<unknown> = async () => {};
+
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -154,6 +157,23 @@ Deno.serve(async (req) => {
     } else {
       return json({ error: 'outfitId or items+ctx are required' }, 400);
     }
+
+    const { data: preview, error: previewError } = await admin
+      .rpc('consume_preview', { p_user: user.id })
+      .single<{ allowed: boolean; used: number; daily_limit: number | null; tier: string }>();
+    if (previewError || !preview) throw previewError ?? new Error('preview check failed');
+    if (!preview.allowed) {
+      return json(
+        { capped: true, code: 'preview_limit', error: 'daily preview limit reached' },
+        429,
+      );
+    }
+    let previewRefunded = false;
+    refundPreview = async () => {
+      if (previewRefunded) return;
+      previewRefunded = true;
+      await admin.rpc('refund_preview', { p_user: user.id });
+    };
 
     const { data: avatar } = await admin
       .from('avatars')
@@ -260,7 +280,10 @@ Deno.serve(async (req) => {
     } finally {
       clearTimeout(timeout);
     }
-    if (!imageB64) return json({ error: 'render unavailable, try again' }, 502);
+    if (!imageB64) {
+      await refundPreview();
+      return json({ error: 'render unavailable, try again' }, 502);
+    }
 
     const binary = Uint8Array.from(atob(imageB64), (c) => c.charCodeAt(0));
     const path = `renders/${user.id}/${crypto.randomUUID()}.png`;
@@ -284,6 +307,7 @@ Deno.serve(async (req) => {
     return json({ renderUrl: signed.signedUrl, engine: 'gemini-tryon' });
   } catch (e) {
     console.error('[tryon-render]', e);
+    await refundPreview().catch(() => {});
     return new Response(JSON.stringify({ error: 'something went wrong' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

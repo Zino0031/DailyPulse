@@ -68,6 +68,13 @@ export function OutfitCard({
           </Text>
         </View>
       )}
+      {render.previewCapped && !render.url && (
+        <View className="mb-4">
+          <Text className="text-center text-footnote text-text-muted">
+            Daily previews used — photo board it is. More tomorrow.
+          </Text>
+        </View>
+      )}
       {render.url && (
         <View className="mb-4">
           <View className="overflow-hidden rounded-lg bg-border">

@@ -80,11 +80,12 @@ async function syncUser(
 ): Promise<SubscriptionState | null> {
   const { data: user, error: userError } = await admin
     .from('users')
-    .select('id')
+    .select('id,tier')
     .eq('id', userId)
     .maybeSingle();
   if (userError) throw userError;
   if (!user) return null;
+  const previousTier = (user as { tier?: string }).tier ?? 'free';
 
   const state = subscriptionStateFrom(await fetchSubscriber(userId, secretKey));
 
@@ -110,6 +111,24 @@ async function syncUser(
     .update({ tier: state.tier })
     .eq('id', userId);
   if (tierError) throw tierError;
+
+  // Fresh budgets on plan change: a user who upgrades mid-day starts
+  // clean instead of inheriting the old plan's spent counters.
+  if (state.tier !== previousTier) {
+    const today = new Date().toISOString().slice(0, 10);
+    const { error: resetError } = await admin
+      .from('generation_usage')
+      .delete()
+      .eq('user_id', userId)
+      .eq('day', today);
+    if (resetError) throw resetError;
+    const { error: previewResetError } = await admin
+      .from('preview_usage')
+      .delete()
+      .eq('user_id', userId)
+      .eq('day', today);
+    if (previewResetError) throw previewResetError;
+  }
   return state;
 }
 

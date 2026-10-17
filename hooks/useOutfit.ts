@@ -63,15 +63,14 @@ async function remoteCompose(
   items: WardrobeItemRow[],
   excludeTopIds: string[],
   regenerate: boolean,
+  count: number,
 ): Promise<RemoteResult | null> {
   if (!isSupabaseConfigured()) return null;
   const supabase = getSupabase();
   const { data } = await supabase.auth.getSession();
   if (!data.session) return null;
   const call = supabase.functions.invoke<{
-    outfitId: string;
-    itemIds: string[];
-    reasoning: string[];
+    outfits: { outfitId: string; itemIds: string[]; reasoning: string[] }[];
     usage?: { used: number; limit: number | null };
   }>('generate-outfit', {
     body: {
@@ -79,6 +78,7 @@ async function remoteCompose(
       dress: ctx.dress,
       mood: ctx.mood,
       gender: ctx.gender,
+      count,
       excludeTopIds,
       regenerate,
     },
@@ -109,29 +109,29 @@ async function remoteCompose(
     return null;
   }
   const picks = result.data;
-  if (!picks?.itemIds?.length) return null;
+  if (!picks?.outfits?.length) return null;
   const byId = new Map(items.map((i) => [i.id, i]));
-  const [top, bottom, shoes, ...rest] = picks.itemIds
-    .map((id) => byId.get(id))
-    .filter((i): i is WardrobeItemRow => Boolean(i));
-  if (!top || !bottom || !shoes) return null;
-  return {
-    used: picks.usage?.used ?? null,
-    boards: [
-      {
-        key: `ai-${picks.outfitId}`,
-        top,
-        bottom,
-        shoes,
-        outerwear: rest.find((i) => i.category === 'outerwear') ?? null,
-        accessory: rest.find((i) => i.category === 'accessory') ?? null,
-        score: 0,
-        reasons: picks.reasoning.slice(0, 4),
-        source: 'ai',
-        outfitId: picks.outfitId,
-      },
-    ],
-  };
+  const boards: OutfitBoard[] = [];
+  for (const pick of picks.outfits) {
+    const [top, bottom, shoes, ...rest] = pick.itemIds
+      .map((id) => byId.get(id))
+      .filter((i): i is WardrobeItemRow => Boolean(i));
+    if (!top || !bottom || !shoes) continue;
+    boards.push({
+      key: `ai-${pick.outfitId}`,
+      top,
+      bottom,
+      shoes,
+      outerwear: rest.find((i) => i.category === 'outerwear') ?? null,
+      accessory: rest.find((i) => i.category === 'accessory') ?? null,
+      score: 0,
+      reasons: pick.reasoning.slice(0, 4),
+      source: 'ai',
+      outfitId: pick.outfitId,
+    });
+  }
+  if (boards.length === 0) return null;
+  return { used: picks.usage?.used ?? null, boards };
 }
 
 /** Weather + calendar + mood + wearer — what the stylist and renders use. */
@@ -241,16 +241,23 @@ export function useOutfit() {
     }
     let cancelled = false;
     setBoardsPending(true);
+    const maxBoards = plan.outfitOptions;
     (async () => {
       try {
-        const remote = await remoteCompose(ctx, items, seenTops.current, runId > 0);
+        const remote = await remoteCompose(
+          ctx,
+          items,
+          seenTops.current,
+          runId > 0,
+          maxBoards,
+        );
         if (cancelled) return;
         if (remote && remote.boards.length > 0) {
           seenTops.current = [...seenTops.current, remote.boards[0].top.id].slice(-6);
-          setBoards(remote.boards);
+          setBoards(remote.boards.slice(0, maxBoards));
           setUsed(remote.used);
         } else {
-          setBoards(composeOutfits(items, ctx, runId));
+          setBoards(composeOutfits(items, ctx, runId).slice(0, maxBoards));
         }
       } catch (e) {
         if (cancelled) return;
@@ -263,7 +270,7 @@ export function useOutfit() {
             if (runId === 0) setBoards([]);
           }
         } else {
-          setBoards(composeOutfits(items, ctx, runId));
+          setBoards(composeOutfits(items, ctx, runId).slice(0, maxBoards));
         }
       } finally {
         if (!cancelled) setBoardsPending(false);

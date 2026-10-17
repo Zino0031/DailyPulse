@@ -19,8 +19,12 @@ export interface Plan {
   tagline: string;
   /** Max closet items; `null` = unlimited. */
   itemLimit: number | null;
-  /** AI outfit generations per UTC day; `null` = unlimited. */
+  /** AI outfit generations per UTC day (generate + regenerate); `null` = unlimited. */
   dailyGenerations: number | null;
+  /** Outfit options returned per generation. */
+  outfitOptions: number;
+  /** AI previews per UTC day; `null` = unlimited. Separate budget from generations. */
+  dailyPreviews: number | null;
   /** Re-roll a generated outfit for fresh options. */
   canRegenerate: boolean;
   renderQuality: RenderQuality;
@@ -35,22 +39,27 @@ export const PLANS: Record<Tier, Plan> = {
     tagline: 'Everything you need to get started',
     itemLimit: 50,
     dailyGenerations: 1,
+    outfitOptions: 1,
+    dailyPreviews: 1,
     canRegenerate: false,
     renderQuality: 'standard',
-    perks: ['Up to 50 closet items', '1 AI outfit a day', 'Standard-quality previews'],
+    perks: ['Up to 50 closet items', '1 AI outfit a day', '1 AI preview a day', 'Standard-quality previews'],
   },
   plus: {
     id: 'plus',
     name: 'Plus',
     tagline: 'More room and more looks every day',
     itemLimit: 250,
-    dailyGenerations: 5,
+    dailyGenerations: 3,
+    outfitOptions: 3,
+    dailyPreviews: 5,
     canRegenerate: true,
     renderQuality: 'standard',
     perks: [
       'Up to 250 closet items',
-      '5 AI outfits a day',
+      '3 AI outfits a day, 3 options each',
       'Regenerate for fresh options',
+      '5 AI previews a day',
       'Standard-quality previews',
     ],
   },
@@ -59,13 +68,16 @@ export const PLANS: Record<Tier, Plan> = {
     name: 'Pro',
     tagline: 'No limits, sharpest previews',
     itemLimit: null,
-    dailyGenerations: null,
+    dailyGenerations: 20,
+    outfitOptions: 5,
+    dailyPreviews: 20,
     canRegenerate: true,
     renderQuality: 'hd',
     perks: [
       'Unlimited closet items',
-      'Unlimited AI outfits',
+      '20 AI outfits a day, 5 options each',
       'Regenerate any time',
+      '20 AI previews a day',
       'HD previews (2× sharper)',
     ],
   },
@@ -87,6 +99,7 @@ export const ENTITLEMENTS = { plus: 'plus', pro: 'pro' } as const;
 export const LIMIT_ERRORS = {
   closetFull: 'closet_full',
   dailyLimit: 'daily_limit',
+  previewLimit: 'preview_limit',
   regenerateLocked: 'regenerate_locked',
 } as const;
 
