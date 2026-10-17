@@ -52,6 +52,8 @@ export const ClosetItemCard = memo(function ClosetItemCard({
             cachePolicy="memory-disk"
             contentFit="cover"
             transition={200}
+            priority="low"
+            enforceEarlyResizing
             onError={() => setFailedUri(item.imageUri)}
             style={{ width: '100%', height: '100%' }}
             accessible={false}

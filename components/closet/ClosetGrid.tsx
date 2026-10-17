@@ -3,24 +3,11 @@ import { FlatList, RefreshControl, View, useWindowDimensions } from 'react-nativ
 
 import { useThemeTokens } from '@/hooks/useThemeTokens';
 import type { ClosetItem } from '@/services/closet';
+import { GRID_GAP as GAP, GRID_GUTTER as GUTTER, gridMetrics } from '@/utils/grid';
 
 import { ClosetItemCard } from './ClosetItemCard';
 
-const GUTTER = 24; // DESIGN.md §4 screen padding (px-6)
-const GAP = 12;
-const MIN_TILE = 150;
 const MAX_CONTENT = 1200; // keeps tiles sane on desktop web / tablets
-
-/**
- * Column count + tile width for the available width: 2 columns on phones,
- * growing on large phones, tablets and web. Exported for tests.
- */
-export function gridMetrics(windowWidth: number): { columns: number; tileWidth: number } {
-  const content = Math.min(windowWidth, MAX_CONTENT) - GUTTER * 2;
-  const columns = Math.max(2, Math.min(6, Math.floor((content + GAP) / (MIN_TILE + GAP))));
-  const tileWidth = Math.floor((content - GAP * (columns - 1)) / columns);
-  return { columns, tileWidth };
-}
 
 interface ClosetGridProps {
   items: ClosetItem[];
@@ -74,7 +61,9 @@ export function ClosetGrid({
           title="Refreshing closet"
         />
       }
-      initialNumToRender={12}
+      initialNumToRender={columns * 6}
+      maxToRenderPerBatch={columns * 4}
+      updateCellsBatchingPeriod={50}
       windowSize={7}
       removeClippedSubviews
     />

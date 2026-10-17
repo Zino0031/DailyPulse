@@ -31,6 +31,10 @@ export function AvatarPreview({ size = 64 }: { size?: number }) {
       style={{ width: size, height: size, borderRadius: size / 2 }}
       cachePolicy="memory-disk"
       contentFit="cover"
+      // Public bucket URL: stable, so the cache key is the URL itself and the
+      // same image is reused across Home / Profile / Outfit without a refetch.
+      priority="high"
+      transition={150}
       accessibilityLabel="Your avatar"
     />
   );
