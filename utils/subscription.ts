@@ -10,7 +10,13 @@ import {
 } from '@/supabase/functions/_shared/tiers';
 
 /** Why the paywall opened — drives its headline and the highlighted plan. */
-export type PaywallReason = 'closet_full' | 'daily_limit' | 'regenerate' | 'hd' | 'upgrade';
+export type PaywallReason =
+  | 'closet_full'
+  | 'daily_limit'
+  | 'preview'
+  | 'regenerate'
+  | 'hd'
+  | 'upgrade';
 
 const TIER_RANK: Record<Tier, number> = { free: 0, plus: 1, pro: 2 };
 
@@ -60,6 +66,15 @@ export function paywallCopy(
             ? "You've used today's AI outfit"
             : `You've used today's ${plural(plan.dailyGenerations ?? 0, 'AI outfit')}`,
         body: `${plan.name} includes ${plural(plan.dailyGenerations ?? 0, 'AI outfit')} a day. More unlock ${resetLabel(now)}, or upgrade to keep styling now.`,
+        highlight: next,
+      };
+    case 'preview':
+      return {
+        title:
+          plan.dailyPreviews === 1
+            ? "You've used today's AI preview"
+            : `You've used today's ${plural(plan.dailyPreviews ?? 0, 'AI preview')}`,
+        body: `${plan.name} includes ${plural(plan.dailyPreviews ?? 0, 'AI preview')} a day. More unlock ${resetLabel(now)}, or upgrade to preview more now.`,
         highlight: next,
       };
     case 'regenerate':

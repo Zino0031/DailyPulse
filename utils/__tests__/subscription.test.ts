@@ -63,6 +63,18 @@ describe('paywallCopy', () => {
     expect(plus.highlight).toBe('pro');
   });
 
+  it('says when AI previews come back and points at the next plan', () => {
+    const free = paywallCopy('preview', 'free', NOW);
+    expect(free.title).toBe("You've used today's AI preview");
+    expect(free.body).toContain('1 AI preview a day');
+    expect(free.body).toContain(resetLabel(NOW));
+    expect(free.highlight).toBe('plus');
+
+    const plus = paywallCopy('preview', 'plus', NOW);
+    expect(plus.title).toBe("You've used today's 5 AI previews");
+    expect(plus.highlight).toBe('pro');
+  });
+
   it('highlights the plan that unlocks the feature', () => {
     expect(paywallCopy('regenerate', 'free').highlight).toBe('plus');
     expect(paywallCopy('hd', 'plus').highlight).toBe('pro');

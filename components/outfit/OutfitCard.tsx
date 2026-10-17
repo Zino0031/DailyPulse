@@ -61,7 +61,7 @@ export function OutfitCard({
           <Text className="text-headline text-primary">Preview with AI</Text>
         </Pressable>
       )}
-      {render.started && !render.url && (
+      {render.started && render.isLoading && !render.url && (
         <View className="mb-4 flex-row items-center justify-center gap-2 rounded-xl bg-border px-6 py-4">
           <Text className="text-footnote text-text-muted">
             Rendering your preview…
@@ -69,10 +69,45 @@ export function OutfitCard({
         </View>
       )}
       {render.previewCapped && !render.url && (
-        <View className="mb-4">
+        <View className="mb-4 gap-2 rounded-xl bg-border px-4 py-3">
           <Text className="text-center text-footnote text-text-muted">
-            Daily previews used — photo board it is. More tomorrow.
+            You&apos;ve used today&apos;s AI previews. More tomorrow, or upgrade
+            for more right now.
           </Text>
+          <Pressable
+            testID="outfit-preview-upgrade"
+            accessibilityRole="button"
+            accessibilityLabel="Get more AI previews"
+            accessibilityHint="Shows the plans"
+            onPress={() => showPaywall('preview')}
+            className="h-10 items-center justify-center rounded-full bg-primary px-6">
+            <Text className="text-headline text-white">Get more previews</Text>
+          </Pressable>
+        </View>
+      )}
+      {render.unavailable && !render.previewCapped && !render.url && (
+        <View className="mb-4 gap-2 rounded-xl bg-border px-4 py-3">
+          <Text className="text-center text-footnote text-text-muted">
+            AI preview is unavailable right now.
+          </Text>
+          <View className="flex-row justify-center gap-2">
+            <Pressable
+              testID="outfit-preview-retry"
+              accessibilityRole="button"
+              accessibilityLabel="Try the AI preview again"
+              onPress={render.retry}
+              className="h-10 items-center justify-center rounded-full border border-border bg-surface px-5">
+              <Text className="text-headline text-text">Try again</Text>
+            </Pressable>
+            <Pressable
+              testID="outfit-preview-see-plans"
+              accessibilityRole="button"
+              accessibilityLabel="See plans"
+              onPress={() => showPaywall('preview')}
+              className="h-10 items-center justify-center rounded-full bg-primary px-5">
+              <Text className="text-headline text-white">See plans</Text>
+            </Pressable>
+          </View>
         </View>
       )}
       {render.url && (
