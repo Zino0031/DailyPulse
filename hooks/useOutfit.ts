@@ -1,4 +1,4 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -9,10 +9,12 @@ import { useUserPreferencesStore } from '@/store/useUserPreferencesStore';
 import { useWardrobe } from '@/hooks/useWardrobe';
 import { useWeather } from '@/hooks/useWeather';
 import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
+import { resolveRenderUrls } from '@/services/renders';
 import { useAuthStore } from '@/store/useAuthStore';
 import { showPaywall } from '@/store/usePaywallStore';
 import { LIMIT_ERRORS, usageDay } from '@/supabase/functions/_shared/tiers';
 import type { WardrobeItemRow } from '@/types/database';
+import { lookbookKeys, savedOutfitKeys } from '@/utils/queryKeys';
 import {
   composeOutfits,
   type OutfitBoard,
@@ -208,7 +210,7 @@ export function useOutfit() {
   const [restored] = useState<LastOutfit | null>(
     () => queryClient.getQueryData<LastOutfit>(lastKey) ?? null,
   );
-  const { remove, removing } = useRemoveOutfit();
+  const { removing } = useRemoveOutfit();
 
   const [runId, setRunId] = useState(0);
   // A restored AI look for today is shown as-is — no auto-regeneration, so a
@@ -349,6 +351,12 @@ export function useOutfit() {
       ? 'limit'
       : null;
 
+  /** Saved/unsaved look → the Lookbook grid + saved-row cache go stale. */
+  function invalidateLookbook() {
+    void queryClient.invalidateQueries({ queryKey: lookbookKeys.all });
+    void queryClient.invalidateQueries({ queryKey: savedOutfitKeys.all });
+  }
+
   async function save(board: OutfitBoard): Promise<string | null> {
     if (!isSupabaseConfigured()) return null;
     setSaving(true);
@@ -362,6 +370,7 @@ export function useOutfit() {
           .eq('id', board.outfitId);
         if (error) return null;
         setSaved({ id: board.outfitId, isSaved: true });
+        invalidateLookbook();
         return board.outfitId;
       }
       const { data } = await supabase.auth.getUser();
@@ -390,6 +399,7 @@ export function useOutfit() {
         .single();
       if (error || !row) return null;
       setSaved({ id: row.id, isSaved: true });
+      invalidateLookbook();
       return row.id;
     } finally {
       setSaving(false);
@@ -401,16 +411,15 @@ export function useOutfit() {
       setSaved(null);
       return;
     }
-    // A generated row stays (it's the AI pick on screen) — only unflag it.
-    if (!boards.some((b) => b.outfitId === outfitId)) {
-      await remove(outfitId);
-      setSaved(null);
-      return;
-    }
+    // Unflag instead of deleting: a row may carry a persisted preview render
+    // (issue #50), so the image survives a re-save without re-rendering. The
+    // Lookbook only shows `is_saved` rows; the saved view's "Remove" still
+    // deletes outright.
     setSaving(true);
     try {
       await getSupabase().from('outfits').update({ is_saved: false }).eq('id', outfitId);
       setSaved(null);
+      invalidateLookbook();
     } finally {
       setSaving(false);
     }
@@ -446,63 +455,65 @@ export function useOutfit() {
   };
 }
 
-/** Load a previously saved outfit row + its items for read-only viewing. */
+/**
+ * Load a previously saved outfit row + its items for read-only viewing. A
+ * query (not local state) so previewing/saving can invalidate it and refresh
+ * the persisted render (issue #50).
+ */
 export function useSavedOutfit(id: string | undefined) {
-  const [board, setBoard] = useState<OutfitBoard | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isError, setIsError] = useState(false);
+  const enabled = Boolean(id) && id !== 'new' && isSupabaseConfigured();
+  const query = useQuery({
+    queryKey: savedOutfitKeys.one(id ?? ''),
+    enabled,
+    queryFn: async (): Promise<OutfitBoard> => {
+      if (!id) throw new Error('not found');
+      const supabase = getSupabase();
+      const { data: row, error } = await supabase
+        .from('outfits')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (error || !row) throw new Error('not found');
+      const { data: found } = await supabase
+        .from('wardrobe_items')
+        .select('*')
+        .in('id', row.item_ids);
+      const byId = new Map((found ?? []).map((i) => [i.id, i]));
+      const [topId, bottomId, shoesId, ...rest] = row.item_ids;
+      const top = byId.get(topId);
+      const bottom = byId.get(bottomId);
+      const shoes = byId.get(shoesId);
+      if (!top || !bottom || !shoes) throw new Error('items missing');
+      // Stored render is a storage path (new rows) or a legacy signed URL;
+      // sign paths on read so the image never dies with the signature.
+      const storedRender = row.rendered_image_url ?? null;
+      const renderUrls = await resolveRenderUrls(storedRender ? [storedRender] : []);
+      return {
+        key: row.id,
+        top,
+        bottom,
+        shoes,
+        outerwear:
+          rest.map((rid) => byId.get(rid)).find((i) => i?.category === 'outerwear') ?? null,
+        accessory:
+          rest.map((rid) => byId.get(rid)).find((i) => i?.category === 'accessory') ?? null,
+        score: 0,
+        reasons: [
+          row.event_summary ? `${row.event_summary} dress code` : 'Saved look',
+          ...(row.mood ? [`${row.mood} mood`] : []),
+        ],
+        source: 'local',
+        outfitId: row.id,
+        renderUrl: storedRender ? (renderUrls.get(storedRender) ?? null) : null,
+      };
+    },
+    retry: false,
+    staleTime: 60 * 1000,
+  });
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      if (!id || id === 'new' || !isSupabaseConfigured()) {
-        if (mounted) setIsLoading(false);
-        return;
-      }
-      try {
-        const supabase = getSupabase();
-        const { data: row, error } = await supabase
-          .from('outfits')
-          .select('*')
-          .eq('id', id)
-          .maybeSingle();
-        if (error || !row) throw new Error('not found');
-        const { data: found } = await supabase
-          .from('wardrobe_items')
-          .select('*')
-          .in('id', row.item_ids);
-        const byId = new Map((found ?? []).map((i) => [i.id, i]));
-        const [topId, bottomId, shoesId, ...rest] = row.item_ids;
-        const top = byId.get(topId);
-        const bottom = byId.get(bottomId);
-        const shoes = byId.get(shoesId);
-        if (!top || !bottom || !shoes) throw new Error('items missing');
-        if (mounted) {
-          setBoard({
-            key: row.id,
-            top,
-            bottom,
-            shoes,
-            outerwear: rest.map((rid) => byId.get(rid)).find((i) => i?.category === 'outerwear') ?? null,
-            accessory: rest.map((rid) => byId.get(rid)).find((i) => i?.category === 'accessory') ?? null,
-            score: 0,
-            reasons: [
-              row.event_summary ? `${row.event_summary} dress code` : 'Saved look',
-              ...(row.mood ? [`${row.mood} mood`] : []),
-            ],
-            source: 'local',
-          });
-        }
-      } catch {
-        if (mounted) setIsError(true);
-      } finally {
-        if (mounted) setIsLoading(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [id]);
-
-  return { board, isLoading, isError };
+  return {
+    board: query.data ?? null,
+    isLoading: enabled && query.isPending,
+    isError: query.isError,
+  };
 }

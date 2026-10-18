@@ -13,9 +13,12 @@
 //   supabase secrets set CLOUDFLARE_ACCOUNT_ID=<id> CLOUDFLARE_API_TOKEN=<token>
 // Deploy: supabase functions deploy render-outfit
 //
-// Renders upload to the private `outfits` bucket; the app gets a 7-day
-// signed URL (expo-image caches it). If no engine yields an image the
-// function returns 502 `unavailable` — the app upsells, it does not fall back.
+// Renders upload to the private `outfits` bucket. When an `outfitId` is given
+// the row stores the storage **path** (`renders/<user>/<uuid>.png`) so the app
+// can re-sign it on read (issue #50); the response still carries a 7-day
+// signed URL for immediate display (expo-image caches it). If no engine yields
+// an image the function returns 502 `unavailable` — the app upsells, it does
+// not fall back.
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -380,9 +383,11 @@ Deno.serve(async (req) => {
     if (signError || !signed) throw signError ?? new Error('sign failed');
 
     if (typeof outfitId === 'string') {
+      // Persist the *path*, not the signed URL: the app re-signs on read so
+      // saved-look thumbnails outlive the 7-day signature (issue #50).
       await admin
         .from('outfits')
-        .update({ rendered_image_url: signed.signedUrl })
+        .update({ rendered_image_url: path })
         .eq('id', outfitId)
         .eq('user_id', user.id);
     }

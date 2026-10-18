@@ -1,4 +1,4 @@
-import { CircleUser, Shirt, Sun } from 'lucide-react-native';
+import { Bookmark, CircleUser, Shirt, Sun } from 'lucide-react-native';
 import { SymbolView } from 'expo-symbols';
 import { Link, Tabs } from 'expo-router';
 import { Pressable } from 'react-native';
@@ -47,6 +47,16 @@ export default function TabLayout() {
           headerShown: false,
           tabBarAccessibilityLabel: 'Closet, your wardrobe items',
           tabBarIcon: ({ color }) => <Shirt size={26} strokeWidth={1.5} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="lookbook"
+        options={{
+          title: 'Lookbook',
+          // The screen draws its own safe-area header with the title + count.
+          headerShown: false,
+          tabBarAccessibilityLabel: 'Lookbook, your saved looks',
+          tabBarIcon: ({ color }) => <Bookmark size={26} strokeWidth={1.5} color={color} />,
         }}
       />
       <Tabs.Screen

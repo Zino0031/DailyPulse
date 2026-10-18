@@ -3,6 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/useAuthStore';
 import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
 import { isRemoteUrl } from '@/services/closet';
+import { resolveRenderUrls } from '@/services/renders';
+import { lookbookKeys } from '@/utils/queryKeys';
+
+export { lookbookKeys };
 
 export interface LookbookEntry {
   id: string;
@@ -15,11 +19,6 @@ export interface LookbookEntry {
   thumbnailKey: string | null;
   itemCount: number;
 }
-
-export const lookbookKeys = {
-  all: ['lookbook'] as const,
-  entries: (userId: string | null) => ['lookbook', userId, 'entries'] as const,
-};
 
 /**
  * Saved outfits (`is_saved`), newest first. Thumbnails resolve through the
@@ -71,16 +70,22 @@ export function useLookbookEntries() {
         );
       }
 
+      const renderUrls = await resolveRenderUrls(
+        rows.map((r) => r.rendered_image_url),
+      );
+
       return rows.map((row) => {
         const firstPhoto =
           row.item_ids?.map((id: string) => photos.get(id)).find(Boolean) ?? null;
-        const thumbnailUrl = row.rendered_image_url ?? firstPhoto;
+        const render = row.rendered_image_url
+          ? (renderUrls.get(row.rendered_image_url) ?? null)
+          : null;
         return {
           id: row.id,
           createdAt: row.created_at,
           mood: row.mood,
           dressCode: row.event_summary,
-          thumbnailUrl,
+          thumbnailUrl: render ?? firstPhoto,
           thumbnailKey: row.rendered_image_url ?? row.item_ids?.[0] ?? row.id,
           itemCount: row.item_ids?.length ?? 0,
         };

@@ -47,11 +47,14 @@ function ItemPhoto({ item, size }: { item: WardrobeItemRow; size?: number }) {
 export function OutfitCard({
   board,
   ctx,
+  onPreviewPersisted,
 }: {
   board: OutfitBoard;
   ctx: OutfitContext;
+  /** Called with the outfit row a preview attached to, so Save reuses it. */
+  onPreviewPersisted?: (outfitId: string) => void;
 }) {
-  const render = useAiRender(board, ctx);
+  const render = useAiRender(board, ctx, onPreviewPersisted);
   const extras = [board.outerwear, board.accessory].filter(
     (item): item is WardrobeItemRow => item !== null,
   );
@@ -163,6 +166,19 @@ export function OutfitCard({
               </Text>
             )}
           </View>
+          {!render.isLoading && (
+            <Pressable
+              testID="outfit-preview-regenerate"
+              accessibilityRole="button"
+              accessibilityLabel="Regenerate AI preview"
+              accessibilityHint="Renders a new preview and replaces the saved image"
+              onPress={() => render.generate()}
+              className="mt-2 self-start rounded-full px-3 py-1.5">
+              <Text className="text-callout font-medium text-primary">
+                Regenerate preview
+              </Text>
+            </Pressable>
+          )}
         </View>
       )}
       <View className="flex-row items-center gap-4">

@@ -95,7 +95,12 @@ function GenerateFlow() {
   } = useOutfit();
   const tokens = useThemeTokens();
   const [selected, setSelected] = useState(0);
+  // Outfit row a preview attached to, keyed by board — lets Save flip that
+  // row (no duplicate) even for on-device boards that had no row before.
+  const [previewIds, setPreviewIds] = useState<Record<string, string>>({});
   const hero = boards[Math.min(selected, boards.length - 1)];
+  const savable =
+    hero && previewIds[hero.key] ? { ...hero, outfitId: previewIds[hero.key] } : hero;
 
   return (
     <ScrollView
@@ -175,7 +180,13 @@ function GenerateFlow() {
 
       {!generating && hero && (
         <>
-          <OutfitCard board={hero} ctx={ctx} />
+          <OutfitCard
+            board={hero}
+            ctx={ctx}
+            onPreviewPersisted={(outfitId) =>
+              setPreviewIds((ids) => ({ ...ids, [hero.key]: outfitId }))
+            }
+          />
           {boards.length > 1 && (
             <View
               accessibilityRole="radiogroup"
@@ -218,7 +229,9 @@ function GenerateFlow() {
                 accessibilityRole="button"
                 accessibilityLabel="Save this outfit"
                 disabled={saving}
-                onPress={() => save(hero)}
+                onPress={() => {
+                  if (savable) void save(savable);
+                }}
                 className="h-[52px] items-center justify-center rounded-full bg-primary px-6">
                 <Text className="text-headline text-white">
                   {saving ? 'Saving…' : 'Save this look'}

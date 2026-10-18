@@ -7,7 +7,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AvatarPreview } from "@/components/avatar/AvatarPreview";
 import { StatusNote } from "@/components/closet/StatusNote";
-import { LookbookSection } from "@/components/outfit/LookbookSection";
 import { PlanSection } from "@/components/subscription/PlanSection";
 import { Button } from "@/components/ui/Button";
 import { ConfirmSheet } from "@/components/ui/Sheet";
@@ -140,8 +139,6 @@ export default function ProfileScreen() {
         </View>
 
         <PlanSection />
-
-        <LookbookSection />
 
         {profile !== undefined && (
           <Button

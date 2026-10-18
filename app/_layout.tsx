@@ -106,7 +106,6 @@ export default function RootLayout() {
                 options={{ headerShown: false }}
               />
               <Stack.Screen name="outfit" options={{ headerShown: false }} />
-              <Stack.Screen name="lookbook" options={{ headerShown: false }} />
               <Stack.Screen
                 name="item/new"
                 options={{ presentation: 'modal', title: 'New item' }}

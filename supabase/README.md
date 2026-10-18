@@ -89,6 +89,24 @@ once spent; failures refund). If no engine yields an image the function
 returns 502 `unavailable` — the app shows the upgrade path, never a
 fallback render.
 
+### Persisted preview renders (issue #50)
+
+When the request carries an `outfitId`, the function stores the render's
+**storage path** (`renders/<user>/<uuid>.png`) in `outfits.rendered_image_url`
+and the app re-signs it on read (`services/renders.ts`) — so saved-look
+thumbnails outlive the 7-day signature. The service role uploads the object,
+so its `owner` is not the app user; the path-based read policy in
+`20261019000000_outfit_render_read_access.sql` lets owners sign their own
+renders. Push it before exercising the Lookbook:
+
+```bash
+supabase db push                                # adds the outfits-bucket read policy
+supabase functions deploy render-outfit         # persists the path (not the URL)
+```
+
+The app sends `outfitId` for AI/saved boards and creates an unsaved draft row
+for on-device boards on first preview (`is_saved` stays false until Save).
+
 ## tryon-render edge function (true virtual try-on — NEEDS BILLING)
 
 Photorealistic try-on over Gemini image models: avatar photo + garment
