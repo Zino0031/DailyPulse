@@ -34,6 +34,20 @@ export interface SavedOutfit {
 }
 
 /**
+ * Cache key for the last generated look. Persisted (utils/queryCache.ts) so a
+ * cold or offline launch renders today's outfit instead of a spinner.
+ */
+export const outfitKeys = {
+  last: (userId: string | null) => ['outfit-last', userId] as const,
+};
+
+export interface LastOutfit {
+  boards: OutfitBoard[];
+  /** UTC day the look was generated for (`usageDay()`) — never reused tomorrow. */
+  day: string;
+}
+
+/**
  * The server refused for plan reasons. Callers must NOT fall back to the
  * local composer — that would quietly bypass the tier limit.
  */
@@ -188,15 +202,30 @@ export function useOutfit() {
   const usage = useGenerationUsage();
   const queryClient = useQueryClient();
   const userId = useAuthStore((s) => s.user?.id ?? null);
+  const lastKey = outfitKeys.last(userId);
+  // Restored synchronously: PersistQueryClientProvider rehydrates before the
+  // tree mounts, so a cold/offline launch finds today's look already cached.
+  const [restored] = useState<LastOutfit | null>(
+    () => queryClient.getQueryData<LastOutfit>(lastKey) ?? null,
+  );
   const { remove, removing } = useRemoveOutfit();
 
   const [runId, setRunId] = useState(0);
+  // A restored AI look for today is shown as-is — no auto-regeneration, so a
+  // cold/offline open is instant and costs no AI generation. On-device boards
+  // are free to recompose, so only AI picks opt out of generating.
+  const restoredIsAi =
+    restored !== null && restored.boards.some((b) => b.source === 'ai');
+  const showRestored =
+    runId === 0 && restored !== null && restored.day === usageDay() && restoredIsAi;
   const [stage, setStage] = useState(0);
   const [blocked, setBlocked] = useState<PlanLimitError['reason'] | null>(null);
   const [saved, setSaved] = useState<SavedOutfit | null>(null);
   const [saving, setSaving] = useState(false);
-  const [boards, setBoards] = useState<OutfitBoard[]>([]);
-  const [boardsPending, setBoardsPending] = useState(true);
+  const [boards, setBoards] = useState<OutfitBoard[]>(
+    showRestored && restored ? restored.boards : [],
+  );
+  const [boardsPending, setBoardsPending] = useState(!showRestored);
   const seenTops = useRef<string[]>([]);
   // Read inside the generation effect without re-running it on every
   // usage refetch (a finished generation must not trigger another).
@@ -209,8 +238,19 @@ export function useOutfit() {
     else queryClient.setQueryData<number>(key, used);
   };
 
+  /** Persist the last AI-styled look so the next launch renders it before the network. */
+  function rememberOutfit(next: OutfitBoard[]) {
+    const ai = next.filter((b) => b.source === 'ai');
+    if (ai.length === 0) return; // on-device boards recompose for free
+    queryClient.setQueryData<LastOutfit>(lastKey, { boards: ai, day: usageDay() });
+  }
+
   // Staged progress UI with a minimum dwell per stage (NFR feel target).
   useEffect(() => {
+    if (showRestored) {
+      setStage(GENERATION_STAGES.length - 1);
+      return;
+    }
     setStage(0);
     if (wardrobeLoading) return;
     const timers: ReturnType<typeof setTimeout>[] = [];
@@ -218,11 +258,16 @@ export function useOutfit() {
       timers.push(setTimeout(() => setStage(i), i * MIN_STAGE_MS));
     }
     return () => timers.forEach(clearTimeout);
-  }, [runId, wardrobeLoading]);
+  }, [runId, wardrobeLoading, showRestored]);
 
   // AI first, local composer as fallback. Runs per generation; the staged
   // progress UI keeps covering while either path resolves.
   useEffect(() => {
+    if (showRestored) {
+      setBoards(restored ? restored.boards : []);
+      setBoardsPending(false);
+      return;
+    }
     if (wardrobeLoading || items.length === 0) {
       setBoards([]);
       setBoardsPending(wardrobeLoading);
@@ -254,10 +299,14 @@ export function useOutfit() {
         if (cancelled) return;
         if (remote && remote.boards.length > 0) {
           seenTops.current = [...seenTops.current, remote.boards[0].top.id].slice(-6);
-          setBoards(remote.boards.slice(0, maxBoards));
+          const next = remote.boards.slice(0, maxBoards);
+          setBoards(next);
+          rememberOutfit(next);
           setUsed(remote.used);
         } else {
-          setBoards(composeOutfits(items, ctx, runId).slice(0, maxBoards));
+          const next = composeOutfits(items, ctx, runId).slice(0, maxBoards);
+          setBoards(next);
+          rememberOutfit(next);
         }
       } catch (e) {
         if (cancelled) return;
@@ -270,7 +319,9 @@ export function useOutfit() {
             if (runId === 0) setBoards([]);
           }
         } else {
-          setBoards(composeOutfits(items, ctx, runId).slice(0, maxBoards));
+          const next = composeOutfits(items, ctx, runId).slice(0, maxBoards);
+          setBoards(next);
+          rememberOutfit(next);
         }
       } finally {
         if (!cancelled) setBoardsPending(false);
@@ -280,7 +331,7 @@ export function useOutfit() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, wardrobeLoading, items.length, usage.isLoading]);
+  }, [runId, wardrobeLoading, items.length, usage.isLoading, showRestored, restored]);
 
   // Paywall triggers on cap (issue #17) — once per refusal.
   useEffect(() => {
@@ -288,7 +339,8 @@ export function useOutfit() {
   }, [blocked]);
 
   const generating =
-    wardrobeLoading || boardsPending || stage < GENERATION_STAGES.length - 1;
+    !showRestored &&
+    (wardrobeLoading || boardsPending || stage < GENERATION_STAGES.length - 1);
   const emptyCloset = !wardrobeLoading && items.length === 0;
   const capped = blocked === 'daily_limit' && boards.length === 0;
   const regenerateLock: RegenerateLock = !plan.canRegenerate

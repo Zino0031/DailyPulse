@@ -27,6 +27,12 @@ function ItemPhoto({ item, size }: { item: WardrobeItemRow; size?: number }) {
       className="bg-border"
       cachePolicy="memory-disk"
       contentFit="cover"
+      // Hero tile: reset the view on id change (option switch) and give it
+      // load priority over the surrounding chrome.
+      recyclingKey={item.id}
+      priority="high"
+      transition={200}
+      enforceEarlyResizing
       accessibilityLabel={`${item.category} in ${item.colors.join(', ') || 'unspecified colors'}`}
     />
   );
@@ -118,6 +124,10 @@ export function OutfitCard({
               style={{ width: '100%', aspectRatio: 3 / 4 }}
               cachePolicy="memory-disk"
               contentFit="cover"
+              recyclingKey={board.key}
+              priority="high"
+              transition={250}
+              enforceEarlyResizing
               onLoad={render.onLoad}
               onError={render.onError}
               accessibilityLabel="AI style preview of this outfit"
