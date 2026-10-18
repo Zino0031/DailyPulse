@@ -321,7 +321,9 @@ Deno.serve(async (req) => {
     }
 
     // Preview budget: one spend per fresh render, refunded on failure.
-    // Cached signed URLs never reach here, so re-views don't double-spend.
+    // There's no cached-URL path through this endpoint — every call renders
+    // again and is billable; the client only caches the URL per board for the
+    // current session.
     const { data: preview, error: previewError } = await admin
       .rpc('consume_preview', { p_user: user.id })
       .single<{ allowed: boolean; used: number; daily_limit: number | null; tier: string }>();
@@ -365,8 +367,13 @@ Deno.serve(async (req) => {
     }
     if (!imageBytes) {
       await refundPreview();
+      // Report the post-refund count so `usage` matches what the user has left.
       return json(
-        { error: 'render unavailable, try again', usage: previewUsage },
+        {
+          error: 'render unavailable, try again',
+          refunded: true,
+          usage: { ...previewUsage, used: Math.max(previewUsage.used - 1, 0) },
+        },
         502,
       );
     }
