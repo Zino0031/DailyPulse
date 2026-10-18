@@ -245,3 +245,79 @@ it('still generates when only an on-device look was cached', async () => {
   expect(await screen.findByText('AI styled', {}, WAIT)).toBeTruthy();
   expect(mockInvoke).toHaveBeenCalledTimes(1);
 });
+
+// --- Issue #44: a refresh must never start a second generation --------------
+
+it('resumes a persisted in-flight request instead of spending again', async () => {
+  // Mid-generation refresh: the intent survived the reload, the look did not.
+  client.setQueryData(outfitKeys.pending(USER), {
+    requestId: 'req-in-flight-1',
+    day: usageDay(),
+  });
+  mockInvoke.mockResolvedValue(aiPick(1));
+
+  await renderScreen({ tier: 'free', used: 0 });
+
+  expect(await screen.findByText('AI styled', {}, WAIT)).toBeTruthy();
+  expect(mockInvoke).toHaveBeenCalledTimes(1);
+  // The server got the original id, so it replays instead of charging again.
+  expect(mockInvoke.mock.calls[0][1].body.requestId).toBe('req-in-flight-1');
+  // The intent is settled — it can never resume (and re-charge) a third time.
+  expect(client.getQueryData(outfitKeys.pending(USER))).toBeUndefined();
+  // …and the finished look is cached, so the next remount renders it free.
+  expect(client.getQueryData<LastOutfit>(outfitKeys.last(USER))?.boards).toHaveLength(1);
+});
+
+it('keeps the intent when the stylist fails so a remount can replay it', async () => {
+  mockInvoke.mockResolvedValue({ data: null, error: new FunctionsFetchError('down') });
+
+  await renderScreen({ tier: 'free', used: 0 });
+
+  expect(await screen.findByText('On-device', {}, WAIT)).toBeTruthy();
+  // A spend may have landed without a response: the intent must survive so the
+  // next mount replays it at no extra cost instead of charging for a lost look.
+  const pending = client.getQueryData<{ requestId: string }>(outfitKeys.pending(USER));
+  expect(pending?.requestId).toBe(mockInvoke.mock.calls[0][1].body.requestId);
+});
+
+it('drops the intent when the server refuses the generation', async () => {
+  mockInvoke.mockResolvedValue(
+    httpError(429, { capped: true, code: 'daily_limit', usage: { used: 1 } }),
+  );
+
+  await renderScreen({ tier: 'free', used: 0 });
+
+  expect(await screen.findByTestId('outfit-capped', {}, WAIT)).toBeTruthy();
+  // Nothing was spent on a refusal, so there is nothing to resume.
+  expect(client.getQueryData(outfitKeys.pending(USER))).toBeUndefined();
+});
+
+it('keeps the intent when the server says the generation is still in flight', async () => {
+  // The first invocation is still generating: don't spend a second one.
+  client.setQueryData(outfitKeys.pending(USER), {
+    requestId: 'req-in-flight-9',
+    day: usageDay(),
+  });
+  mockInvoke.mockResolvedValue({ data: { pending: true, code: 'generation_pending' }, error: null });
+
+  await renderScreen({ tier: 'plus', used: 0 });
+
+  expect(await screen.findByText('On-device', {}, WAIT)).toBeTruthy();
+  expect(client.getQueryData<{ requestId: string }>(outfitKeys.pending(USER))?.requestId).toBe(
+    'req-in-flight-9',
+  );
+});
+
+it('mints a fresh request id when the user regenerates', async () => {
+  mockInvoke.mockResolvedValue(aiPick(2));
+  await renderScreen({ tier: 'plus', used: 1 });
+  await screen.findByText('AI styled', {}, WAIT);
+  const first = mockInvoke.mock.calls[0][1].body.requestId;
+  expect(typeof first).toBe('string');
+
+  await fireEvent.press(screen.getByTestId('outfit-regenerate'));
+
+  await waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(2));
+  // A regenerate is a new intent — it must not replay the previous request.
+  expect(mockInvoke.mock.calls[1][1].body.requestId).not.toBe(first);
+});

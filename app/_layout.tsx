@@ -59,8 +59,10 @@ const queryClient = new QueryClient({
 });
 
 // Offline-readable cache (PRD §4): wardrobe + last weather + last outfit are
-// persisted (see utils/queryCache.ts). Calendar, profile and usage are cheap
-// to refetch and go stale fast, so they stay in memory only.
+// persisted (see utils/queryCache.ts), plus the in-flight generation intent so
+// a refresh mid-generation can resume instead of spending twice (#44).
+// Calendar, profile and usage are cheap to refetch and go stale fast, so they
+// stay in memory only.
 const persister = createAsyncStoragePersister({
   storage: AsyncStorage,
   key: 'myoutfit-query-cache',

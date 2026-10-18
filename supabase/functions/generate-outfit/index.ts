@@ -13,7 +13,7 @@
 // Free-tier design: one Gemini Flash call per generation (~1-2s). The
 // on-device composer (services/outfit.ts) stays as the offline fallback.
 
-import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 
 import { LIMIT_ERRORS, planFor } from '../_shared/tiers.ts';
 
@@ -39,6 +39,104 @@ interface WardrobeRow {
   colors: string[];
   formality: string;
   season: string[];
+}
+
+// Loosely typed: the function runs against the service role and the schema is
+// generated ad hoc, so pinning the Database generic here buys nothing.
+type AdminClient = SupabaseClient<any, 'public', any>;
+
+const INTENT_POLL_MS = 400;
+const INTENT_POLL_TRIES = 25; // ≈10s, comfortably inside the client's 25s timeout
+const INTENT_STALE_MS = 90_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Wait for the invocation that owns this intent to record its result, so a
+ * duplicate that arrived mid-generation returns the same look for free.
+ */
+async function waitForRecorded(
+  admin: AdminClient,
+  userId: string,
+  requestId: string,
+): Promise<unknown | null> {
+  for (let i = 0; i < INTENT_POLL_TRIES; i++) {
+    await sleep(INTENT_POLL_MS);
+    const { data } = await admin
+      .from('generation_requests')
+      .select('response')
+      .eq('user_id', userId)
+      .eq('request_id', requestId)
+      .maybeSingle();
+    if (data?.response) return data.response;
+    if (!data) return null; // the owner gave up and cleaned up
+  }
+  return null;
+}
+
+/**
+ * Claim a generation intent (issue #44).
+ *
+ * - completed → return its recorded response, spending nothing;
+ * - in flight → wait for the owner's result (or report "still cooking");
+ * - stale → the owner died; refund what it spent and take the intent over;
+ * - absent → reserve it and report that this invocation owns the generation;
+ * - unavailable → the table isn't deployed yet, so skip dedup entirely.
+ */
+async function claimRequest(
+  admin: AdminClient,
+  userId: string,
+  requestId: string,
+): Promise<{ recorded: unknown | null; claimed: boolean; unavailable: boolean }> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: row, error: readError } = await admin
+      .from('generation_requests')
+      .select('response, spent, created_at')
+      .eq('user_id', userId)
+      .eq('request_id', requestId)
+      .maybeSingle();
+    if (readError) {
+      console.error('[generate-outfit] intent read', readError);
+      return { recorded: null, claimed: false, unavailable: true };
+    }
+
+    if (row?.response) return { recorded: row.response, claimed: false, unavailable: false };
+
+    if (!row) {
+      const { error: insertError } = await admin
+        .from('generation_requests')
+        .insert({ user_id: userId, request_id: requestId, response: null, spent: false });
+      if (!insertError) return { recorded: null, claimed: true, unavailable: false };
+      // 23505 = lost the insert race → re-read and replay/wait. Anything else
+      // (e.g. the migration isn't applied) → generate without dedup.
+      if (insertError.code !== '23505') {
+        console.error('[generate-outfit] intent reserve', insertError);
+        return { recorded: null, claimed: false, unavailable: true };
+      }
+      continue;
+    }
+
+    const age = Date.now() - new Date(row.created_at).getTime();
+    if (age > INTENT_STALE_MS) {
+      // Only hand back a generation if it was spent today — refund_generation
+      // credits the current UTC day, and an older row's budget is long gone
+      // (usage is reset per day).
+      const today = new Date().toISOString().slice(0, 10);
+      if (row.spent && String(row.created_at).slice(0, 10) === today) {
+        await admin.rpc('refund_generation', { p_user: userId });
+      }
+      await admin
+        .from('generation_requests')
+        .delete()
+        .eq('user_id', userId)
+        .eq('request_id', requestId);
+      continue;
+    }
+
+    const recorded = await waitForRecorded(admin, userId, requestId);
+    return { recorded, claimed: false, unavailable: false };
+  }
+  return { recorded: null, claimed: false, unavailable: false };
 }
 
 function buildPrompt(
@@ -84,6 +182,9 @@ Deno.serve(async (req) => {
 
   // Set once a generation is spent; any later failure gives it back.
   let refund: (() => Promise<unknown>) | null = null;
+  // Dropped when this invocation owns an idempotency reservation that must not
+  // outlive a failure (issue #44).
+  let cleanupIntent: (() => Promise<unknown>) | null = null;
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -105,12 +206,22 @@ Deno.serve(async (req) => {
       excludeTopIds = [],
       regenerate = false,
       count: requestedCount,
+      requestId,
     } = await req.json();
     if (typeof weather?.tempC !== 'number' || typeof dress !== 'string' || typeof mood !== 'string') {
       return json({ error: 'weather.tempC, dress and mood are required' }, 400);
     }
 
     const admin = createClient(supabaseUrl, serviceKey);
+
+    // Idempotency (issue #44). The client resends the same request id when a
+    // mount resumes a generation that was in flight, so refresh / StrictMode /
+    // retry collapse into the one generation the user actually asked for. The
+    // reservation is claimed below, right before the generation is spent.
+    const idempotencyKey =
+      typeof requestId === 'string' && requestId.length >= 8 && requestId.length <= 128
+        ? requestId
+        : null;
 
     const { data: profile } = await admin
       .from('users')
@@ -145,6 +256,32 @@ Deno.serve(async (req) => {
     const geminiKey = Deno.env.get('GEMINI_API_KEY');
     if (!geminiKey) return json({ error: 'AI not configured' }, 503);
 
+    // Claim the intent before spending: a duplicate that arrives mid-flight
+    // replays / waits here instead of charging a second generation (#44).
+    if (idempotencyKey) {
+      const claim = await claimRequest(admin, user.id, idempotencyKey);
+      if (claim.recorded) {
+        console.log('[generate-outfit] replay', idempotencyKey);
+        return json(claim.recorded);
+      }
+      if (claim.unavailable) {
+        console.warn('[generate-outfit] idempotency unavailable — generating without dedup');
+      } else if (!claim.claimed) {
+        // The owner is still generating; the client keeps its intent and
+        // retries on the next mount rather than being charged for a second one.
+        console.log('[generate-outfit] intent in flight', idempotencyKey);
+        return json({ pending: true, code: 'generation_pending' }, 202);
+      } else {
+        cleanupIntent = async () => {
+          await admin
+            .from('generation_requests')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('request_id', idempotencyKey);
+        };
+      }
+    }
+
     // Atomic check-and-spend (supabase/migrations/20261016000000_subscriptions.sql).
     // Anything failing after this point refunds the generation.
     const { data: spend, error: spendError } = await admin
@@ -153,6 +290,8 @@ Deno.serve(async (req) => {
     if (spendError || !spend) throw spendError ?? new Error('usage check failed');
     const usage = { used: spend.used, limit: spend.daily_limit };
     if (!spend.allowed) {
+      await cleanupIntent?.();
+      cleanupIntent = null;
       return json(
         { capped: true, code: LIMIT_ERRORS.dailyLimit, tier: plan.id, usage, error: 'daily generation limit reached' },
         429,
@@ -161,9 +300,21 @@ Deno.serve(async (req) => {
     refund = async () => {
       await admin.rpc('refund_generation', { p_user: user.id });
     };
+    // Record that the generation is now spent so a reservation left behind by
+    // a dead invocation can be refunded when it is taken over (#44).
+    if (cleanupIntent) {
+      const { error: spendMarkError } = await admin
+        .from('generation_requests')
+        .update({ spent: true })
+        .eq('user_id', user.id)
+        .eq('request_id', idempotencyKey);
+      if (spendMarkError) console.error('[generate-outfit] mark spent', spendMarkError);
+    }
     const fail = async (body: unknown, status: number) => {
       await refund?.();
       refund = null;
+      await cleanupIntent?.();
+      cleanupIntent = null;
       return json(body, status);
     };
 
@@ -250,10 +401,25 @@ Deno.serve(async (req) => {
       return fail({ error: 'stylist returned a bad pick, try again' }, 502);
     }
 
-    return json({ outfits, usage });
+    const payload = { outfits, usage };
+    if (idempotencyKey && cleanupIntent) {
+      // Record the result on the reservation so a remount replays it for free.
+      const { error: recordError } = await admin
+        .from('generation_requests')
+        .update({ response: payload })
+        .eq('user_id', user.id)
+        .eq('request_id', idempotencyKey);
+      if (recordError) console.error('[generate-outfit] record request', recordError);
+      cleanupIntent = null; // settled: leave the reservation in place
+    }
+
+    return json(payload);
   } catch (e) {
     console.error('[generate-outfit]', e);
     await refund?.().catch((refundError) => console.error('[generate-outfit] refund', refundError));
+    await cleanupIntent?.().catch((cleanupError) =>
+      console.error('[generate-outfit] cleanup', cleanupError),
+    );
     return new Response(JSON.stringify({ error: 'something went wrong' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
