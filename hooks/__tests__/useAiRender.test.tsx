@@ -1,22 +1,24 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { FunctionsHttpError } from '@supabase/supabase-js';
+import type { ReactNode } from 'react';
 
 import { useAiRender } from '@/hooks/useAiRender';
 import type { OutfitBoard, OutfitContext } from '@/services/outfit';
 import type { WardrobeItemRow } from '@/types/database';
 
 const mockInvoke = jest.fn();
+const mockGetSession = jest.fn();
 jest.mock('@/services/supabase', () => ({
   isSupabaseConfigured: () => true,
   getSupabase: () => ({
-    auth: {
-      getSession: async () => ({ data: { session: { user: { id: 'user-1' } } } }),
-    },
+    auth: { getSession: mockGetSession },
     functions: { invoke: mockInvoke },
   }),
 }));
 jest.mock('@/hooks/useSubscription', () => ({
-  usePlan: () => ({ plan: { renderQuality: 'standard' } }),
+  subscriptionKeys: { all: ['subscription'] },
+  usePlan: () => ({ tier: 'free', plan: { name: 'Free', renderQuality: 'standard' } }),
 }));
 
 function wear(id: string, category: WardrobeItemRow['category']): WardrobeItemRow {
@@ -60,14 +62,26 @@ const httpError = (status: number, body: unknown) => ({
   error: new FunctionsHttpError(new Response(JSON.stringify(body), { status })),
 });
 
-beforeEach(() => jest.clearAllMocks());
+function wrapper() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+}
+
+const renderAi = () => renderHook(() => useAiRender(board, ctx), { wrapper: wrapper() });
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockGetSession.mockResolvedValue({ data: { session: { user: { id: 'user-1' } } } });
+});
 
 it('renders the server image on a successful preview', async () => {
   mockInvoke.mockResolvedValue({
-    data: { renderUrl: 'https://cdn/render.png', quality: 'standard' },
+    data: { renderUrl: 'https://cdn/render.png', quality: 'standard', usage: { used: 1, limit: 1 } },
     error: null,
   });
-  const { result } = await renderHook(() => useAiRender(board, ctx));
+  const { result } = await renderAi();
 
   await act(async () => {
     await result.current.generate();
@@ -75,14 +89,15 @@ it('renders the server image on a successful preview', async () => {
 
   await waitFor(() => expect(result.current.url).toBe('https://cdn/render.png'));
   expect(result.current.previewCapped).toBe(false);
-  expect(result.current.unavailable).toBe(false);
+  expect(result.current.failure).toBeNull();
+  expect(result.current.previewUsage).toEqual({ used: 1, limit: 1 });
 });
 
 it('never produces a fallback URL when previews are spent (429)', async () => {
   mockInvoke.mockResolvedValue(
     httpError(429, { capped: true, code: 'preview_limit', usage: { used: 1, limit: 1 } }),
   );
-  const { result } = await renderHook(() => useAiRender(board, ctx));
+  const { result } = await renderAi();
 
   await act(async () => {
     await result.current.generate();
@@ -91,18 +106,95 @@ it('never produces a fallback URL when previews are spent (429)', async () => {
   expect(result.current.url).toBeNull();
   expect(result.current.previewCapped).toBe(true);
   // Budget refusal is not the same as an engine failure.
+  expect(result.current.failure).toBeNull();
   expect(result.current.unavailable).toBe(false);
+  // Server usage is captured so the card can show what's left.
+  expect(result.current.previewUsage).toEqual({ used: 1, limit: 1 });
 });
 
-it('flags unavailable (no render, no fallback) when the engine fails', async () => {
+it('treats a bare 429 (gateway limit) as an engine outage, not a cap', async () => {
+  mockInvoke.mockResolvedValue(httpError(429, { error: 'rate limited' }));
+  const { result } = await renderAi();
+
+  await act(async () => {
+    await result.current.generate();
+  });
+
+  expect(result.current.previewCapped).toBe(false);
+  expect(result.current.failure).toBe('engine');
+});
+
+it('flags a retryable engine failure when the engine fails (502)', async () => {
   mockInvoke.mockResolvedValue(httpError(502, { error: 'render unavailable, try again' }));
-  const { result } = await renderHook(() => useAiRender(board, ctx));
+  const { result } = await renderAi();
 
   await act(async () => {
     await result.current.generate();
   });
 
   expect(result.current.url).toBeNull();
+  expect(result.current.failure).toBe('engine');
   expect(result.current.unavailable).toBe(true);
   expect(result.current.previewCapped).toBe(false);
+});
+
+it('separates "sign in needed" from a retryable outage (401)', async () => {
+  mockInvoke.mockResolvedValue(httpError(401, { error: 'sign in required' }));
+  const { result } = await renderAi();
+
+  await act(async () => {
+    await result.current.generate();
+  });
+
+  expect(result.current.failure).toBe('sign_in');
+  expect(result.current.unavailable).toBe(false);
+});
+
+it('separates "can\'t preview this outfit" from an outage (404)', async () => {
+  mockInvoke.mockResolvedValue(httpError(404, { error: 'outfit not found' }));
+  const { result } = await renderAi();
+
+  await act(async () => {
+    await result.current.generate();
+  });
+
+  expect(result.current.failure).toBe('outfit');
+  expect(result.current.unavailable).toBe(false);
+});
+
+it('never calls the function without a session, and reports sign-in', async () => {
+  mockGetSession.mockResolvedValue({ data: { session: null } });
+  const { result } = await renderAi();
+
+  await act(async () => {
+    await result.current.generate();
+  });
+
+  expect(mockInvoke).not.toHaveBeenCalled();
+  expect(result.current.failure).toBe('sign_in');
+});
+
+it('retries a failed image once before giving up, without re-rendering', async () => {
+  mockInvoke.mockResolvedValue({
+    data: { renderUrl: 'https://cdn/render.png', quality: 'standard' },
+    error: null,
+  });
+  const { result } = await renderAi();
+  await act(async () => {
+    await result.current.generate();
+  });
+  await waitFor(() => expect(result.current.url).toBe('https://cdn/render.png'));
+
+  await act(async () => result.current.onError());
+  // First failure silently reloads the same URL (new key), still not failed.
+  expect(result.current.imageRetryKey).toBe(1);
+  expect(result.current.imageFailed).toBe(false);
+
+  await act(async () => result.current.onError());
+  expect(result.current.imageFailed).toBe(true);
+  // Crucially, no second generation was billed.
+  expect(mockInvoke).toHaveBeenCalledTimes(1);
+
+  await act(async () => result.current.reloadImage());
+  expect(result.current.imageFailed).toBe(false);
 });

@@ -6,6 +6,7 @@ import {
   isClosetFullError,
   isUpgrade,
   paywallCopy,
+  previewsLine,
   renewalText,
   resetLabel,
   usageText,
@@ -75,6 +76,15 @@ describe('paywallCopy', () => {
     expect(plus.highlight).toBe('pro');
   });
 
+  it('never tells a Pro user to upgrade — there is nothing above them', () => {
+    for (const reason of ['preview', 'daily_limit'] as const) {
+      const copy = paywallCopy(reason, 'pro', NOW);
+      expect(copy.highlight).toBeNull();
+      expect(copy.body).not.toMatch(/upgrade/i);
+      expect(copy.body).toContain(resetLabel(NOW));
+    }
+  });
+
   it('highlights the plan that unlocks the feature', () => {
     expect(paywallCopy('regenerate', 'free').highlight).toBe('plus');
     expect(paywallCopy('hd', 'plus').highlight).toBe('pro');
@@ -113,6 +123,19 @@ describe('generationsLine', () => {
     );
     expect(generationsLine(PLANS.free, allowanceOf(1, 1), NOW)).toBe(
       `No AI outfits left today on Free. More unlock ${resetLabel(NOW)}.`,
+    );
+  });
+});
+
+describe('previewsLine', () => {
+  it('reads naturally for every state, with correct plurals', () => {
+    expect(previewsLine(PLANS.free, allowanceOf(1, 0), NOW)).toBe('1 of 1 AI preview left today.');
+    expect(previewsLine(PLANS.plus, allowanceOf(5, 2), NOW)).toBe('3 of 5 AI previews left today.');
+    expect(previewsLine(PLANS.pro, allowanceOf(null, 4), NOW)).toBe(
+      'Unlimited AI previews on Pro.',
+    );
+    expect(previewsLine(PLANS.free, allowanceOf(1, 1), NOW)).toBe(
+      `No AI previews left today on Free. More unlock ${resetLabel(NOW)}.`,
     );
   });
 });
