@@ -1,6 +1,7 @@
 // generate-outfit — Epic 5 outfit picker (#14), budgets per issue #42.
-// POST { weather: { tempC, rainPct }, dress, mood, count?: number, excludeTopIds?: string[], regenerate?: boolean }
+// POST { weather: { tempC, rainPct }, dress, mood, count?: number, excludeTopIds?: string[], regenerate?: boolean, requestId?: string }
 //   -> { outfits: [{ outfitId, itemIds, reasoning }], usage: { used, limit } }
+//    | 202 { pending: true, code: 'generation_pending' }  (another invocation owns this intent)
 //    | 429 { capped: true, code: 'daily_limit', usage }
 //    | 403 { locked: true, code: 'regenerate_locked' }
 // `count` is clamped to the caller's plan.outfitOptions (Free 1, Plus 3,
@@ -15,6 +16,7 @@
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 
+import { claimRequest, type IntentStore } from '../_shared/intent.ts';
 import { LIMIT_ERRORS, planFor } from '../_shared/tiers.ts';
 
 const GEMINI_MODEL = 'gemini-3.8-flash';
@@ -44,100 +46,6 @@ interface WardrobeRow {
 // Loosely typed: the function runs against the service role and the schema is
 // generated ad hoc, so pinning the Database generic here buys nothing.
 type AdminClient = SupabaseClient<any, 'public', any>;
-
-const INTENT_POLL_MS = 400;
-const INTENT_POLL_TRIES = 25; // ≈10s, comfortably inside the client's 25s timeout
-const INTENT_STALE_MS = 90_000;
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/**
- * Wait for the invocation that owns this intent to record its result, so a
- * duplicate that arrived mid-generation returns the same look for free.
- */
-async function waitForRecorded(
-  admin: AdminClient,
-  userId: string,
-  requestId: string,
-): Promise<unknown | null> {
-  for (let i = 0; i < INTENT_POLL_TRIES; i++) {
-    await sleep(INTENT_POLL_MS);
-    const { data } = await admin
-      .from('generation_requests')
-      .select('response')
-      .eq('user_id', userId)
-      .eq('request_id', requestId)
-      .maybeSingle();
-    if (data?.response) return data.response;
-    if (!data) return null; // the owner gave up and cleaned up
-  }
-  return null;
-}
-
-/**
- * Claim a generation intent (issue #44).
- *
- * - completed → return its recorded response, spending nothing;
- * - in flight → wait for the owner's result (or report "still cooking");
- * - stale → the owner died; refund what it spent and take the intent over;
- * - absent → reserve it and report that this invocation owns the generation;
- * - unavailable → the table isn't deployed yet, so skip dedup entirely.
- */
-async function claimRequest(
-  admin: AdminClient,
-  userId: string,
-  requestId: string,
-): Promise<{ recorded: unknown | null; claimed: boolean; unavailable: boolean }> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { data: row, error: readError } = await admin
-      .from('generation_requests')
-      .select('response, spent, created_at')
-      .eq('user_id', userId)
-      .eq('request_id', requestId)
-      .maybeSingle();
-    if (readError) {
-      console.error('[generate-outfit] intent read', readError);
-      return { recorded: null, claimed: false, unavailable: true };
-    }
-
-    if (row?.response) return { recorded: row.response, claimed: false, unavailable: false };
-
-    if (!row) {
-      const { error: insertError } = await admin
-        .from('generation_requests')
-        .insert({ user_id: userId, request_id: requestId, response: null, spent: false });
-      if (!insertError) return { recorded: null, claimed: true, unavailable: false };
-      // 23505 = lost the insert race → re-read and replay/wait. Anything else
-      // (e.g. the migration isn't applied) → generate without dedup.
-      if (insertError.code !== '23505') {
-        console.error('[generate-outfit] intent reserve', insertError);
-        return { recorded: null, claimed: false, unavailable: true };
-      }
-      continue;
-    }
-
-    const age = Date.now() - new Date(row.created_at).getTime();
-    if (age > INTENT_STALE_MS) {
-      // Only hand back a generation if it was spent today — refund_generation
-      // credits the current UTC day, and an older row's budget is long gone
-      // (usage is reset per day).
-      const today = new Date().toISOString().slice(0, 10);
-      if (row.spent && String(row.created_at).slice(0, 10) === today) {
-        await admin.rpc('refund_generation', { p_user: userId });
-      }
-      await admin
-        .from('generation_requests')
-        .delete()
-        .eq('user_id', userId)
-        .eq('request_id', requestId);
-      continue;
-    }
-
-    const recorded = await waitForRecorded(admin, userId, requestId);
-    return { recorded, claimed: false, unavailable: false };
-  }
-  return { recorded: null, claimed: false, unavailable: false };
-}
 
 function buildPrompt(
   items: WardrobeRow[],
@@ -259,7 +167,7 @@ Deno.serve(async (req) => {
     // Claim the intent before spending: a duplicate that arrives mid-flight
     // replays / waits here instead of charging a second generation (#44).
     if (idempotencyKey) {
-      const claim = await claimRequest(admin, user.id, idempotencyKey);
+      const claim = await claimRequest(admin as unknown as IntentStore, user.id, idempotencyKey);
       if (claim.recorded) {
         console.log('[generate-outfit] replay', idempotencyKey);
         return json(claim.recorded);

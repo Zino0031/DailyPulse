@@ -79,6 +79,9 @@ function GenerateFlow() {
     boards,
     generating,
     stage,
+    resuming,
+    stillPending,
+    checkAgain,
     emptyCloset,
     wardrobeError,
     retryLoad,
@@ -122,7 +125,26 @@ function GenerateFlow() {
         </View>
       </View>
 
-      {generating && <LoadingCard label={stage} />}
+      {generating && (
+        <LoadingCard label={resuming ? 'Picking up where you left off' : stage} />
+      )}
+
+      {!generating && stillPending && (
+        <View testID="outfit-pending-card" className="rounded-xl bg-surface p-5 shadow-md">
+          <Text accessibilityRole="header" className="text-title-3 font-semibold text-text">
+            Your look is still being styled
+          </Text>
+          <Text className="mb-4 mt-1 text-footnote text-text-muted">
+            We&apos;ll show it here as soon as it&apos;s ready. You won&apos;t be
+            charged again.
+          </Text>
+          <Button
+            label="Check again"
+            onPress={checkAgain}
+            accessibilityHint="Looks for the finished look — doesn't use another AI outfit"
+          />
+        </View>
+      )}
 
       {!generating && capped && (
         <View testID="outfit-capped" className="rounded-xl bg-surface p-5 shadow-md">
@@ -162,16 +184,21 @@ function GenerateFlow() {
         />
       )}
 
-      {!generating && !capped && !emptyCloset && !wardrobeError && boards.length === 0 && (
-        <View className="rounded-xl bg-surface p-5 shadow-md">
-          <Text className="text-title-3 font-semibold text-text">
-            Not enough to go on
-          </Text>
-          <Text className="mt-1 text-footnote text-text-muted">
-            Add at least a top, a bottom and shoes to get styled boards.
-          </Text>
-        </View>
-      )}
+      {!generating &&
+        !capped &&
+        !emptyCloset &&
+        !wardrobeError &&
+        !stillPending &&
+        boards.length === 0 && (
+          <View className="rounded-xl bg-surface p-5 shadow-md">
+            <Text className="text-title-3 font-semibold text-text">
+              Not enough to go on
+            </Text>
+            <Text className="mt-1 text-footnote text-text-muted">
+              Add at least a top, a bottom and shoes to get styled boards.
+            </Text>
+          </View>
+        )}
 
       {!generating && hero && (
         <>
