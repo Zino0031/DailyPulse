@@ -21,6 +21,8 @@ import { allowanceOf, type Allowance } from '@/utils/subscription';
 export const subscriptionKeys = {
   all: ['subscription'] as const,
   usage: (userId: string | null, day: string) => ['subscription', userId, 'usage', day] as const,
+  preview: (userId: string | null, day: string) =>
+    ['subscription', userId, 'preview', day] as const,
   row: (userId: string | null) => ['subscription', userId, 'row'] as const,
   offers: (userId: string | null) => ['subscription', userId, 'offers'] as const,
 };
@@ -64,6 +66,33 @@ export function useGenerationUsage(): Allowance & { isLoading: boolean } {
   });
   return {
     ...allowanceOf(plan.dailyGenerations, query.data ?? 0),
+    isLoading: query.isLoading,
+  };
+}
+
+/** Today's AI previews vs the plan's daily allowance (UTC day). */
+export function usePreviewUsage(): Allowance & { isLoading: boolean } {
+  const userId = useUserId();
+  const { plan } = usePlan();
+  const day = usageDay();
+  const query = useQuery({
+    queryKey: subscriptionKeys.preview(userId, day),
+    queryFn: async (): Promise<number> => {
+      const { data, error } = await getSupabase()
+        .from('preview_usage')
+        .select('used')
+        .eq('user_id', userId as string)
+        .eq('day', day)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.used ?? 0;
+    },
+    enabled: userId !== null && isSupabaseConfigured(),
+    staleTime: 60 * 1000,
+    retry: 1,
+  });
+  return {
+    ...allowanceOf(plan.dailyPreviews, query.data ?? 0),
     isLoading: query.isLoading,
   };
 }

@@ -10,7 +10,13 @@ import {
 } from '@/supabase/functions/_shared/tiers';
 
 /** Why the paywall opened — drives its headline and the highlighted plan. */
-export type PaywallReason = 'closet_full' | 'daily_limit' | 'regenerate' | 'hd' | 'upgrade';
+export type PaywallReason =
+  | 'closet_full'
+  | 'daily_limit'
+  | 'preview'
+  | 'regenerate'
+  | 'hd'
+  | 'upgrade';
 
 const TIER_RANK: Record<Tier, number> = { free: 0, plus: 1, pro: 2 };
 
@@ -53,15 +59,29 @@ export function paywallCopy(
         body: `${plan.name} holds ${plural(plan.itemLimit ?? 0, 'item')}. Everything you've added stays safe — pick a plan with more room to keep adding.`,
         highlight: next,
       };
-    case 'daily_limit':
+    case 'daily_limit': {
+      const reset = `${plan.name} includes ${plural(plan.dailyGenerations ?? 0, 'AI outfit')} a day. More unlock ${resetLabel(now)}`;
       return {
         title:
           plan.dailyGenerations === 1
             ? "You've used today's AI outfit"
             : `You've used today's ${plural(plan.dailyGenerations ?? 0, 'AI outfit')}`,
-        body: `${plan.name} includes ${plural(plan.dailyGenerations ?? 0, 'AI outfit')} a day. More unlock ${resetLabel(now)}, or upgrade to keep styling now.`,
+        // Pro has no next plan: never invite a top-tier user to "upgrade".
+        body: next ? `${reset}, or upgrade to keep styling now.` : `${reset}.`,
         highlight: next,
       };
+    }
+    case 'preview': {
+      const reset = `${plan.name} includes ${plural(plan.dailyPreviews ?? 0, 'AI preview')} a day. More unlock ${resetLabel(now)}`;
+      return {
+        title:
+          plan.dailyPreviews === 1
+            ? "You've used today's AI preview"
+            : `You've used today's ${plural(plan.dailyPreviews ?? 0, 'AI preview')}`,
+        body: next ? `${reset}, or upgrade to preview more now.` : `${reset}.`,
+        highlight: next,
+      };
+    }
     case 'regenerate':
       return {
         title: 'Regenerate comes with Plus',
@@ -119,6 +139,15 @@ export function generationsLine(plan: Plan, allowance: Allowance, now: Date = ne
     return `No AI outfits left today on ${plan.name}. More unlock ${resetLabel(now)}.`;
   }
   return `${allowance.remaining} of ${plural(allowance.limit, 'AI outfit')} left today.`;
+}
+
+/** One sentence about today's AI previews, e.g. under the Preview button. */
+export function previewsLine(plan: Plan, allowance: Allowance, now: Date = new Date()): string {
+  if (allowance.limit === null) return `Unlimited AI previews on ${plan.name}.`;
+  if (allowance.atLimit) {
+    return `No AI previews left today on ${plan.name}. More unlock ${resetLabel(now)}.`;
+  }
+  return `${allowance.remaining} of ${plural(allowance.limit, 'AI preview')} left today.`;
 }
 
 /** Closet line for warnings: null when there's nothing worth saying. */

@@ -88,6 +88,13 @@ export type GenerationUsageRow = {
   used: number;
 };
 
+/** Daily AI preview counter (UTC `day`); written by edge functions only. */
+export type PreviewUsageRow = {
+  user_id: string;
+  day: string;
+  used: number;
+};
+
 export interface Database {
   public: {
     Tables: {
@@ -126,6 +133,12 @@ export interface Database {
         Row: GenerationUsageRow;
         Insert: GenerationUsageRow;
         Update: Partial<GenerationUsageRow>;
+        Relationships: [];
+      };
+      preview_usage: {
+        Row: PreviewUsageRow;
+        Insert: PreviewUsageRow;
+        Update: Partial<PreviewUsageRow>;
         Relationships: [];
       };
     };

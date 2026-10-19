@@ -62,12 +62,14 @@ transparently falls back to the on-device composer — the "AI styled" vs
 
 ## render-outfit edge function (AI try-on imagery)
 
-FLUX.1-schnell over Hugging Face Inference Providers. One-time setup:
+Cloudflare Workers AI only (issue #45) — no cross-provider fallback.
+Engine order: FLUX.2-klein-4b (garment references) → FLUX.1-schnell
+(text only). One-time setup:
 
 ```bash
-# 1. Free token: https://huggingface.co/settings/tokens
-#    (fine-grained, "Make calls to Inference Providers" permission)
-supabase secrets set HF_TOKEN=<paste-token>
+# 1. Free Workers AI account (no card). Account ID + an API token with the
+#    "Workers AI" permission — https://dash.cloudflare.com/profile/api-tokens
+supabase secrets set CLOUDFLARE_ACCOUNT_ID=<id> CLOUDFLARE_API_TOKEN=<token>
 
 # 2. Deploy
 supabase functions deploy render-outfit
@@ -82,8 +84,10 @@ curl -X POST https://<ref>.supabase.co/functions/v1/render-outfit \
   -d '{"items":[{"category":"top","colors":["white"],"formality":"casual"}],"ctx":{"tempC":22,"dress":"casual","mood":"relaxed"},"seed":7}'
 ```
 
-Without the secret the function 503s and the app falls back to the
-keyless Pollinations render, then to the photo board — nothing breaks.
+Every render spends one AI preview (`consume_preview`, 429 `preview_limit`
+once spent; failures refund). If no engine yields an image the function
+returns 502 `unavailable` — the app shows the upgrade path, never a
+fallback render.
 
 ## tryon-render edge function (true virtual try-on — NEEDS BILLING)
 
@@ -95,9 +99,9 @@ output a free-tier limit of **0** — do not rely on it without billing:
 supabase functions deploy tryon-render
 ```
 
-The app intentionally does NOT call it; renders come from the keyless
-Pollinations engine with photo-board fallback. Revisit when there's render
-budget (natural Pro-tier perk: try-on costs per render).
+The app intentionally does NOT call it; renders come from `render-outfit`
+(Cloudflare) with the item-photo board as the non-AI fallback. Revisit when
+there's render budget (natural Pro-tier perk: try-on costs per render).
 
 ## Subscriptions — RevenueCat paywall + tier gating (issue #17)
 
@@ -106,8 +110,10 @@ What enforces what:
 | Limit | Free | Plus | Pro | Enforced by |
 |---|---|---|---|---|
 | Closet items | 50 | 250 | unlimited | `enforce_closet_limit` trigger (insert fails with `closet_full`) |
-| AI outfits / day (UTC) | 1 | 5 | unlimited | `consume_generation()` in `generate-outfit` (429) |
-| Regenerate | — | ✓ | ✓ | `generate-outfit` (403 `regenerate_locked`) |
+| AI outfits / day (UTC) | 1 | 3 | 20 | `consume_generation()` in `generate-outfit` (429) |
+| Outfit options / generation | 1 | 3 | 5 | `generate-outfit` clamps `count` to the plan |
+| AI previews / day (UTC) | 1 | 5 | 20 | `consume_preview()` in `render-outfit` (429 `preview_limit`) |
+| Regenerate | locked (paywall) | ✓ | ✓ | `generate-outfit` + app gate (403 `regenerate_locked`) |
 | Preview quality | standard | standard | HD | `render-outfit` reads the tier |
 
 `users.tier` is only writable by the service role (trigger

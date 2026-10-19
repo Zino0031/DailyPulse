@@ -1,33 +1,26 @@
-// render-outfit — AI try-on imagery over Hugging Face Inference Providers.
+// render-outfit — AI try-on imagery over Cloudflare Workers AI (issue #45).
 // POST { outfitId?: string, items?: WardrobeItem[], ctx: OutfitContext, seed?: number }
-//   -> { renderUrl, engine, quality: 'standard' | 'hd' } | 503 { engine: 'unavailable' }
+//   -> { renderUrl, engine: 'cf-klein' | 'cf-flux', quality: 'standard' | 'hd', usage }
+//    | 429 { capped: true, code: 'preview_limit', usage }
+//    | 502 { error: 'render unavailable, try again', usage }
+//
+// Cloudflare is the only engine — no cross-provider fallback. Engine order:
+// FLUX.2-klein-4b (garment references) → FLUX.1-schnell (text only).
 // Output size follows the caller's tier (Pro = HD) — read server-side,
 // never from the request (supabase/functions/_shared/tiers.ts).
 //
-// render-outfit — AI try-on imagery. Engine order: Cloudflare FLUX.1-schnell
-// (free: 10k neurons/day ≈ 100+ renders, no card) → HF router (needs credits).
 // Free Cloudflare account → account ID + API token with Workers AI permission:
 //   supabase secrets set CLOUDFLARE_ACCOUNT_ID=<id> CLOUDFLARE_API_TOKEN=<token>
-// Optional paid fallback: supabase secrets set HF_TOKEN=<token>
 // Deploy: supabase functions deploy render-outfit
 //
 // Renders upload to the private `outfits` bucket; the app gets a 7-day
-// signed URL (expo-image caches it). Without a token the function 503s and
-// the app falls back to the keyless Pollinations render, then to photos.
+// signed URL (expo-image caches it). If no engine yields an image the
+// function returns 502 `unavailable` — the app upsells, it does not fall back.
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 
 import { planFor, RENDER_SIZE } from '../_shared/tiers.ts';
 import { isOwnPath, isRemoteUrl } from '../_shared/wardrobeTags.ts';
-
-// Ordered fallback chain — providers retire models regularly (FLUX.1-schnell
-// went 410 mid-project); first 2xx wins, failures are fast and silent.
-const HF_MODELS = [
-  { id: 'black-forest-labs/FLUX.1-dev', steps: 24, guidance: 3.5 },
-  { id: 'stabilityai/stable-diffusion-3.5-large', steps: 28, guidance: 4.5 },
-  { id: 'Qwen/Qwen-Image', steps: 30, guidance: 4.0 },
-];
-const RENDER_TIMEOUT_MS = 55000;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -325,7 +318,9 @@ Deno.serve(async (req) => {
     }
 
     // Preview budget: one spend per fresh render, refunded on failure.
-    // Cached signed URLs never reach here, so re-views don't double-spend.
+    // There's no cached-URL path through this endpoint — every call renders
+    // again and is billable; the client only caches the URL per board for the
+    // current session.
     const { data: preview, error: previewError } = await admin
       .rpc('consume_preview', { p_user: user.id })
       .single<{ allowed: boolean; used: number; daily_limit: number | null; tier: string }>();
@@ -354,8 +349,8 @@ Deno.serve(async (req) => {
     const quality = planFor(profile?.tier).renderQuality;
 
     const prompt = buildPrompt(items, promptCtx);
-    // Free engines first: klein multi-reference → schnell text → HF router
-    // (needs credits). Anything failing falls through to the next.
+    // Cloudflare only: klein multi-reference → schnell text. Whichever
+    // yields an image wins; otherwise the caller gets `unavailable`.
     const accountId = Deno.env.get('CLOUDFLARE_ACCOUNT_ID');
     const apiToken = Deno.env.get('CLOUDFLARE_API_TOKEN');
     let imageBytes: ArrayBuffer | null = null;
@@ -368,57 +363,14 @@ Deno.serve(async (req) => {
       engine = 'cf-flux';
     }
     if (!imageBytes) {
-      // Paid/credit fallback: HF router (needs HF_TOKEN + credits).
-      const hfToken = Deno.env.get('HF_TOKEN');
-      if (hfToken) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), RENDER_TIMEOUT_MS);
-        try {
-          for (const model of HF_MODELS) {
-            try {
-              const hfRes = await fetch(
-                `https://router.huggingface.co/hf-inference/models/${model.id}`,
-                {
-                  method: 'POST',
-                  headers: {
-                    Authorization: `Bearer ${hfToken}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    inputs: prompt,
-                    parameters: {
-                      width: RENDER_SIZE[quality].width,
-                      height: RENDER_SIZE[quality].height,
-                      guidance_scale: model.guidance,
-                      num_inference_steps: model.steps,
-                      seed,
-                    },
-                  }),
-                  signal: controller.signal,
-                },
-              );
-              if (!hfRes.ok) {
-                const detail = await hfRes.text().catch(() => '');
-                console.error('[render-outfit] HF error', model.id, hfRes.status, detail.slice(0, 300));
-                continue;
-              }
-              imageBytes = await hfRes.arrayBuffer();
-              engine = 'hf-flux';
-              break;
-            } catch (e) {
-              if ((e as Error)?.name === 'AbortError') throw e;
-              console.error('[render-outfit] HF transport error', model.id, e);
-            }
-          }
-        } finally {
-          clearTimeout(timeout);
-        }
-      }
-    }
-    if (!imageBytes) {
       await refundPreview();
+      // Report the post-refund count so `usage` matches what the user has left.
       return json(
-        { error: 'render unavailable, try again', usage: previewUsage },
+        {
+          error: 'render unavailable, try again',
+          refunded: true,
+          usage: { ...previewUsage, used: Math.max(previewUsage.used - 1, 0) },
+        },
         502,
       );
     }
