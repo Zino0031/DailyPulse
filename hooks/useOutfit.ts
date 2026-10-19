@@ -41,12 +41,40 @@ export interface SavedOutfit {
  */
 export const outfitKeys = {
   last: (userId: string | null) => ['outfit-last', userId] as const,
+  /**
+   * In-flight generation intent, persisted so a refresh mid-generation resumes
+   * the same request id instead of spending a second generation (#44).
+   */
+  pending: (userId: string | null) => ['outfit-pending', userId] as const,
 };
 
 export interface LastOutfit {
   boards: OutfitBoard[];
   /** UTC day the look was generated for (`usageDay()`) — never reused tomorrow. */
   day: string;
+}
+
+/** One user intent to generate; reused across remounts until it settles. */
+export interface PendingGeneration {
+  requestId: string;
+  /** UTC day the intent was made for (`usageDay()`). */
+  day: string;
+  /** Whether the original intent was a regenerate — resume must preserve it. */
+  regenerate?: boolean;
+  /** Tops the original intent wanted to avoid — resume must preserve it. */
+  excludeTopIds?: string[];
+}
+
+/**
+ * Request id for one generation intent. The server dedups on it, so it only
+ * needs to be unique — not cryptographically strong. (Issue #44.)
+ */
+export function newRequestId(): string {
+  const cryptoRef = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (typeof cryptoRef?.randomUUID === 'function') return cryptoRef.randomUUID();
+  return `gen-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
 }
 
 /**
@@ -62,6 +90,24 @@ class PlanLimitError extends Error {
   }
 }
 
+/**
+ * The server still owns the intent (HTTP 202 `generation_pending`): another
+ * invocation is mid-generation and hasn't recorded a result yet. We keep the
+ * same request id and retry rather than falling back to the on-device composer,
+ * which would hide a generation the user may already have spent (#44).
+ */
+class PendingError extends Error {
+  constructor() {
+    super('generation_pending');
+  }
+}
+
+/** Retries for a still-cooking intent, and the wait between them. */
+const PENDING_RETRY_MS = 700;
+const PENDING_RETRY_TRIES = 2;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const REMOTE_TIMEOUT_MS = 25000;
 
 interface RemoteResult {
@@ -74,20 +120,23 @@ interface RemoteResult {
  * unreachable (the offline composer takes over); throws PlanLimitError
  * when the daily cap or the regenerate lock applies.
  */
-async function remoteCompose(
+async function composeRemote(
   ctx: OutfitContext,
   items: WardrobeItemRow[],
   excludeTopIds: string[],
   regenerate: boolean,
   count: number,
+  requestId: string,
 ): Promise<RemoteResult | null> {
   if (!isSupabaseConfigured()) return null;
   const supabase = getSupabase();
   const { data } = await supabase.auth.getSession();
   if (!data.session) return null;
   const call = supabase.functions.invoke<{
-    outfits: { outfitId: string; itemIds: string[]; reasoning: string[] }[];
+    outfits?: { outfitId: string; itemIds: string[]; reasoning: string[] }[];
     usage?: { used: number; limit: number | null };
+    /** Present on a 202: another invocation is still generating this intent. */
+    pending?: boolean;
   }>('generate-outfit', {
     body: {
       weather: { tempC: ctx.tempC, rainPct: ctx.rainPct },
@@ -97,16 +146,20 @@ async function remoteCompose(
       count,
       excludeTopIds,
       regenerate,
+      requestId,
     },
   });
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('timeout')), REMOTE_TIMEOUT_MS),
-  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('timeout')), REMOTE_TIMEOUT_MS);
+  });
   let result: Awaited<typeof call>;
   try {
     result = await Promise.race([call, timeout]);
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
   if (result.error) {
     if (result.error instanceof FunctionsHttpError) {
@@ -125,6 +178,9 @@ async function remoteCompose(
     return null;
   }
   const picks = result.data;
+  // A 202 (`generation_pending`) is not a failure: the caller retries the same
+  // id instead of treating it as an unreachable function.
+  if (picks?.pending) throw new PendingError();
   if (!picks?.outfits?.length) return null;
   const byId = new Map(items.map((i) => [i.id, i]));
   const boards: OutfitBoard[] = [];
@@ -148,6 +204,31 @@ async function remoteCompose(
   }
   if (boards.length === 0) return null;
   return { used: picks.usage?.used ?? null, boards };
+}
+
+/**
+ * In-flight generations keyed by request id. A remount (refresh, StrictMode
+ * double-effect) that resumes the same intent joins the running call instead
+ * of firing a second one — the server dedups too, but there is no reason to
+ * send it twice. (Issue #44.)
+ */
+const inflightGenerations = new Map<string, Promise<RemoteResult | null>>();
+
+function remoteCompose(
+  ctx: OutfitContext,
+  items: WardrobeItemRow[],
+  excludeTopIds: string[],
+  regenerate: boolean,
+  count: number,
+  requestId: string,
+): Promise<RemoteResult | null> {
+  const existing = inflightGenerations.get(requestId);
+  if (existing) return existing;
+  const run = composeRemote(ctx, items, excludeTopIds, regenerate, count, requestId).finally(() => {
+    inflightGenerations.delete(requestId);
+  });
+  inflightGenerations.set(requestId, run);
+  return run;
 }
 
 /** Weather + calendar + mood + wearer — what the stylist and renders use. */
@@ -212,7 +293,30 @@ export function useOutfit() {
   );
   const { removing } = useRemoveOutfit();
 
+  // A generation the previous mount started but never saw finish (refresh
+  // mid-flight). Resuming the same request id lets the server replay it
+  // instead of charging again. (Issue #44.)
+  const pendingKey = outfitKeys.pending(userId);
+  const [restoredPending] = useState<PendingGeneration | null>(
+    () => queryClient.getQueryData<PendingGeneration>(pendingKey) ?? null,
+  );
+  // One request id per intent: reused across remounts, minted anew on an
+  // explicit regenerate.
+  const requestIdRef = useRef<string>(
+    restoredPending && restoredPending.day === usageDay()
+      ? restoredPending.requestId
+      : newRequestId(),
+  );
+  // The request id whose result has already been applied. Re-runs mid-flight
+  // (items change, StrictMode, a usage refetch) must re-join the in-flight call
+  // rather than bail out — bailing was a stuck-spinner bug, and re-joining lets
+  // a second mount pick up the result (#44).
+  const settledRef = useRef<string | null>(null);
+
   const [runId, setRunId] = useState(0);
+  // Bumped by "Check again" — re-runs the effect without the regenerate
+  // semantics that `runId` carries.
+  const [retryToken, setRetryToken] = useState(0);
   // A restored AI look for today is shown as-is — no auto-regeneration, so a
   // cold/offline open is instant and costs no AI generation. On-device boards
   // are free to recompose, so only AI picks opt out of generating.
@@ -228,6 +332,14 @@ export function useOutfit() {
     showRestored && restored ? restored.boards : [],
   );
   const [boardsPending, setBoardsPending] = useState(!showRestored);
+  // The server still owns the intent (202) — show a "still styling" card with a
+  // Check again action instead of a silent on-device look (#44).
+  const [stillPending, setStillPending] = useState(false);
+  // Resuming a persisted intent — the loading copy says so, so a refresh
+  // doesn't read as a brand-new (billable) generation.
+  const [resuming, setResuming] = useState(
+    restoredPending !== null && restoredPending.day === usageDay(),
+  );
   const seenTops = useRef<string[]>([]);
   // Read inside the generation effect without re-running it on every
   // usage refetch (a finished generation must not trigger another).
@@ -245,6 +357,21 @@ export function useOutfit() {
     const ai = next.filter((b) => b.source === 'ai');
     if (ai.length === 0) return; // on-device boards recompose for free
     queryClient.setQueryData<LastOutfit>(lastKey, { boards: ai, day: usageDay() });
+  }
+
+  /** Persist the intent BEFORE the call so a refresh can resume it (#44). */
+  function rememberPending(requestId: string, regenerate: boolean, excludeTopIds: string[]) {
+    queryClient.setQueryData<PendingGeneration>(pendingKey, {
+      requestId,
+      day: usageDay(),
+      regenerate,
+      excludeTopIds,
+    });
+  }
+
+  /** The intent settled (succeeded, or refused) — nothing left to resume. */
+  function clearPending() {
+    queryClient.removeQueries({ queryKey: pendingKey });
   }
 
   // Staged progress UI with a minimum dwell per stage (NFR feel target).
@@ -286,33 +413,85 @@ export function useOutfit() {
       setBoardsPending(false);
       return;
     }
+    // One intent = one request. A re-run mid-flight (items change, StrictMode
+    // double-effect, a usage refetch) re-joins the in-flight call rather than
+    // bailing — bailing left the spinner stuck, because the first run's cleanup
+    // had already cancelled its `finally` (#44). We only stop once it settles.
+    if (settledRef.current === requestIdRef.current) return;
+    const requestId = requestIdRef.current;
+    // A resumed intent keeps its original regenerate / exclude semantics.
+    const resumingIntent =
+      restoredPending !== null &&
+      restoredPending.day === usageDay() &&
+      restoredPending.requestId === requestId;
+    const regenerate = resumingIntent ? Boolean(restoredPending?.regenerate) : runId > 0;
+    const excludeTopIds = resumingIntent
+      ? (restoredPending?.excludeTopIds ?? [])
+      : seenTops.current;
+    rememberPending(requestId, regenerate, excludeTopIds);
     let cancelled = false;
+    setStillPending(false);
     setBoardsPending(true);
     const maxBoards = plan.outfitOptions;
     (async () => {
       try {
-        const remote = await remoteCompose(
-          ctx,
-          items,
-          seenTops.current,
-          runId > 0,
-          maxBoards,
-        );
+        let remote: RemoteResult | null = null;
+        for (let attempt = 0; ; attempt++) {
+          try {
+            remote = await remoteCompose(
+              ctx,
+              items,
+              excludeTopIds,
+              regenerate,
+              maxBoards,
+              requestId,
+            );
+            break;
+          } catch (err) {
+            if (cancelled) return;
+            // Still cooking: retry the same id a couple of times before
+            // surfacing the "still styling" card.
+            if (err instanceof PendingError && attempt < PENDING_RETRY_TRIES) {
+              await sleep(PENDING_RETRY_MS);
+              if (cancelled) return;
+              continue;
+            }
+            throw err;
+          }
+        }
         if (cancelled) return;
         if (remote && remote.boards.length > 0) {
+          settledRef.current = requestId;
+          setResuming(false);
           seenTops.current = [...seenTops.current, remote.boards[0].top.id].slice(-6);
           const next = remote.boards.slice(0, maxBoards);
           setBoards(next);
           rememberOutfit(next);
           setUsed(remote.used);
+          clearPending();
         } else {
+          // Unreachable function: no spend to protect, but keep the intent so a
+          // later mount retries rather than silently downgrading to on-device.
           const next = composeOutfits(items, ctx, runId).slice(0, maxBoards);
           setBoards(next);
           rememberOutfit(next);
+          // The meter may disagree with the screen after any side-effect-free
+          // path — re-read the truth instead of assuming no spend landed.
+          setUsed(null);
         }
       } catch (e) {
         if (cancelled) return;
-        if (e instanceof PlanLimitError) {
+        if (e instanceof PendingError) {
+          // Still cooking after retries: keep the intent and say so, rather
+          // than showing an on-device look the user may have paid for.
+          setStillPending(true);
+          setResuming(false);
+          setUsed(null);
+        } else if (e instanceof PlanLimitError) {
+          // Refused, so the intent is settled — nothing was spent to resume.
+          settledRef.current = requestId;
+          setResuming(false);
+          clearPending();
           setBlocked(e.reason);
           if (e.reason === 'daily_limit') {
             setUsed(e.used);
@@ -321,9 +500,13 @@ export function useOutfit() {
             if (runId === 0) setBoards([]);
           }
         } else {
+          // Unknown failure: a spend may have landed without a response. Keep
+          // the intent so a remount replays it (0 extra spend) instead of
+          // charging again for a look the user never saw (#44).
           const next = composeOutfits(items, ctx, runId).slice(0, maxBoards);
           setBoards(next);
           rememberOutfit(next);
+          setUsed(null);
         }
       } finally {
         if (!cancelled) setBoardsPending(false);
@@ -333,7 +516,7 @@ export function useOutfit() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, wardrobeLoading, items.length, usage.isLoading, showRestored, restored]);
+  }, [runId, retryToken, wardrobeLoading, items.length, usage.isLoading, showRestored, restored]);
 
   // Paywall triggers on cap (issue #17) — once per refusal.
   useEffect(() => {
@@ -432,13 +615,39 @@ export function useOutfit() {
     }
     setSaved(null);
     setBlocked(null);
+    setStillPending(false);
+    setResuming(false);
+    // A pending intent still owns a generation — replay it before spending a
+    // new one, so Regenerate never abandons a look the user may have paid for.
+    const pending = queryClient.getQueryData<PendingGeneration>(pendingKey);
+    if (pending && pending.day === usageDay()) {
+      requestIdRef.current = pending.requestId;
+      settledRef.current = null;
+      setRetryToken((n) => n + 1);
+      return;
+    }
+    // A regenerate is a new intent: mint a fresh id so the server generates
+    // instead of replaying the previous request (#44).
+    requestIdRef.current = newRequestId();
+    settledRef.current = null;
     setRunId((n) => n + 1);
+  }
+
+  /** Re-check a still-cooking intent by resending the same request id. */
+  function checkAgain() {
+    setStillPending(false);
+    setRetryToken((n) => n + 1);
   }
 
   return {
     boards,
     generating,
     stage: GENERATION_STAGES[Math.min(stage, GENERATION_STAGES.length - 1)],
+    /** True while picking up a persisted in-flight intent after a refresh. */
+    resuming,
+    /** True when the server still owns the intent (202) — offer Check again. */
+    stillPending,
+    checkAgain,
     emptyCloset,
     wardrobeError,
     retryLoad,
