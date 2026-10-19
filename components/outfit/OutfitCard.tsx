@@ -61,8 +61,17 @@ function Notice({ children, className = '' }: { children: ReactNode; className?:
  * render (#15 follow-up) swaps this body for generated imagery — the card
  * chrome and actions stay the same.
  */
-export function OutfitCard({ board, ctx }: { board: OutfitBoard; ctx: OutfitContext }) {
-  const render = useAiRender(board, ctx);
+export function OutfitCard({
+  board,
+  ctx,
+  onPreviewPersisted,
+}: {
+  board: OutfitBoard;
+  ctx: OutfitContext;
+  /** Called with the outfit row a preview attached to, so Save reuses it. */
+  onPreviewPersisted?: (outfitId: string) => void;
+}) {
+  const render = useAiRender(board, ctx, onPreviewPersisted);
   const { plan, tier } = usePlan();
   const previews = usePreviewUsage();
   // A next plan exists only for Free → Plus and Plus → Pro. Pro has nothing
@@ -234,6 +243,19 @@ export function OutfitCard({ board, ctx }: { board: OutfitBoard; ctx: OutfitCont
               <Text className="ml-auto text-caption text-text-subtle">Rendering…</Text>
             )}
           </View>
+          {!render.isLoading && (
+            <Pressable
+              testID="outfit-preview-regenerate"
+              accessibilityRole="button"
+              accessibilityLabel="Regenerate AI preview"
+              accessibilityHint="Renders a new preview and replaces the saved image"
+              onPress={() => render.generate()}
+              className="mt-2 self-start rounded-full px-3 py-1.5">
+              <Text className="text-callout font-medium text-primary">
+                Regenerate preview
+              </Text>
+            </Pressable>
+          )}
         </View>
       )}
       <View className="flex-row items-center gap-4">

@@ -5,7 +5,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { StatusNote } from '@/components/closet/StatusNote';
 import { LookbookTile } from '@/components/outfit/LookbookTile';
-import { BackButton } from '@/components/ui/BackButton';
 import { ConfirmSheet } from '@/components/ui/Sheet';
 import { useDeleteLookbookEntry, useLookbookEntries } from '@/hooks/useLookbook';
 import { friendlyError } from '@/utils/errors';
@@ -13,8 +12,8 @@ import { GRID_GAP, GRID_GUTTER, gridMetrics } from '@/utils/grid';
 import { prefetchImages } from '@/utils/image';
 
 /**
- * Full saved-lookbook grid (issue #16). Virtualized (issue #18) so a long
- * history scrolls smoothly — the profile only shows a short preview.
+ * Saved-lookbook grid (issue #16). Its own bottom tab (issue #50); virtualized
+ * (issue #18) so a long history scrolls smoothly.
  */
 export default function LookbookScreen() {
   const { data: entries = [], isPending, isError, error, refetch } = useLookbookEntries();
@@ -23,9 +22,10 @@ export default function LookbookScreen() {
   const { width } = useWindowDimensions();
   const { columns, tileWidth } = gridMetrics(width);
 
-  // Warm the disk cache for permanent thumbnails (saved AI renders) so the
-  // grid never flashes while scrolling. Private signed photos cache on render
-  // keyed by storage path, so they are intentionally skipped (utils/image.ts).
+  // Warm the disk cache for permanent thumbnails (legacy remote renders) so
+  // the grid never flashes while scrolling. New AI renders and private signed
+  // photos cache on render keyed by storage path, so they are intentionally
+  // skipped (utils/image.ts).
   useEffect(() => {
     prefetchImages(
       entries
@@ -37,7 +37,6 @@ export default function LookbookScreen() {
   return (
     <SafeAreaView edges={['top']} className="flex-1 bg-bg">
       <View className="w-full max-w-[1200px] flex-row items-center gap-3 self-center px-6 pb-3 pt-4">
-        <BackButton />
         <View className="flex-1">
           <Text accessibilityRole="header" className="text-title-1 font-bold text-text">
             Lookbook

@@ -227,6 +227,15 @@ The signature navigation pattern. Reference: `mock-ups/` welcome card screenshot
 | Accessibility | FAB `accessibilityLabel="Generate today's outfit"`, 56pt satisfies 44pt minimum |
 | Implementation note | Build the notch as a thin custom `react-native-svg` component — avoids a heavy third-party bar dep. Spec'd here; actual component lands in the shell ticket. |
 
+**Current shell (Expo Router bottom tabs).** The FAB bar above is the target pattern; today the shell is a plain 4-tab bar: **Today · Closet · Lookbook · Profile** (`app/(tabs)/_layout.tsx`). The Lookbook has its own tab (issue #50) — it is no longer a section of Profile.
+
+### AI preview (persisted)
+
+- "Preview with AI" on the outfit card renders imagery from Cloudflare (`render-outfit`) and **persists** it against the outfit row (`rendered_image_url`, a storage path). Opening a saved look — or the Lookbook thumbnail — reuses that render with no second render and no second preview spend (issue #50).
+- The card shows the persisted render immediately; a small **Regenerate preview** action re-renders and overwrites it (normal preview-quota rules apply).
+- Previewing does **not** add a look to the Lookbook: **Save** still gates what appears there. On-device boards get an unsaved draft row on first preview so Save can flip it instead of duplicating.
+- Budget refusals show the upgrade path (`preview` paywall reason); engine failures show "Try again". Never a substituted image.
+
 ---
 
 ## 8. Motion
@@ -300,3 +309,4 @@ Scope-protected so this stays reviewable:
 ## 12. Changelog
 
 - **v1 (2026-10-07)** — Initial design system. Palette, type scale, spacing, radius, shadow, mood accents, floating-FAB tab bar spec.
+- **v2 (2026-10-18)** — Lookbook is its own bottom tab (Today · Closet · Lookbook · Profile); AI previews persist to the outfit row and are reused by the Lookbook + saved-look detail, with a Regenerate action (issue #50).

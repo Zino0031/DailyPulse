@@ -10,6 +10,7 @@ import type { WardrobeItemRow } from '@/types/database';
 import type { Allowance } from '@/utils/subscription';
 
 const mockInvoke = jest.fn();
+const mockFrom = jest.fn();
 const mockState: {
   tier: 'free' | 'plus' | 'pro';
   quality: 'standard' | 'hd';
@@ -27,6 +28,7 @@ jest.mock('@/services/supabase', () => ({
       getSession: async () => ({ data: { session: { user: { id: 'user-1' } } } }),
     },
     functions: { invoke: mockInvoke },
+    from: mockFrom,
   }),
 }));
 jest.mock('@/hooks/useSubscription', () => ({
@@ -43,6 +45,16 @@ jest.mock('@/hooks/useSubscription', () => ({
   usePreviewUsage: () => mockState.preview,
 }));
 jest.mock('@/components/avatar/AvatarPreview', () => ({ AvatarPreview: () => null }));
+
+/** Chainable PostgREST stand-in: every call returns itself; awaiting resolves. */
+function tableBuilder(result: { data: unknown; error: unknown }) {
+  const chain: Record<string, unknown> = {};
+  for (const m of ['select', 'eq', 'insert', 'update', 'delete']) chain[m] = () => chain;
+  chain.single = async () => result;
+  chain.maybeSingle = async () => result;
+  chain.then = (resolve: (v: unknown) => unknown) => resolve(result);
+  return chain;
+}
 
 function wear(id: string, category: WardrobeItemRow['category']): WardrobeItemRow {
   return {
@@ -85,12 +97,22 @@ const httpError = (status: number, body: unknown) => ({
   error: new FunctionsHttpError(new Response(JSON.stringify(body), { status })),
 });
 
-function renderCard() {
+function renderCard(
+  overrides: Partial<OutfitBoard> = {},
+  onPreviewPersisted?: (outfitId: string) => void,
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const Wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
-  return render(<OutfitCard board={board} ctx={ctx} />, { wrapper: Wrapper });
+  return render(
+    <OutfitCard
+      board={{ ...board, ...overrides } as OutfitBoard}
+      ctx={ctx}
+      onPreviewPersisted={onPreviewPersisted}
+    />,
+    { wrapper: Wrapper },
+  );
 }
 
 async function preview() {
@@ -111,6 +133,29 @@ beforeEach(() => {
     nearLimit: false,
     isLoading: false,
   };
+  mockFrom.mockImplementation(() => tableBuilder({ data: { id: 'draft-1' }, error: null }));
+});
+
+it('shows a persisted render immediately, no Preview tap', async () => {
+  await renderCard({ renderUrl: 'https://signed/render.png' });
+
+  expect(screen.getByLabelText('AI style preview of this outfit')).toBeTruthy();
+  expect(screen.queryByLabelText('Generate AI preview')).toBeNull();
+  expect(mockInvoke).not.toHaveBeenCalled();
+});
+
+it('creates a draft row for an on-device preview and reports it to the screen', async () => {
+  const onPersisted = jest.fn();
+  mockInvoke.mockResolvedValue({
+    data: { renderUrl: 'https://cdn/render.png', quality: 'standard' },
+    error: null,
+  });
+
+  await renderCard({ outfitId: undefined, source: 'local' }, onPersisted);
+  await fireEvent.press(screen.getByLabelText('Generate AI preview'));
+
+  await waitFor(() => expect(onPersisted).toHaveBeenCalledWith('draft-1'));
+  expect(mockInvoke.mock.calls[0][1].body.outfitId).toBe('draft-1');
 });
 
 it('offers the upgrade path and opens the paywall when previews are spent', async () => {

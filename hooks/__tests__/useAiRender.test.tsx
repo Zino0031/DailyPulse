@@ -8,18 +8,30 @@ import type { OutfitBoard, OutfitContext } from '@/services/outfit';
 import type { WardrobeItemRow } from '@/types/database';
 
 const mockInvoke = jest.fn();
+const mockFrom = jest.fn();
 const mockGetSession = jest.fn();
 jest.mock('@/services/supabase', () => ({
   isSupabaseConfigured: () => true,
   getSupabase: () => ({
     auth: { getSession: mockGetSession },
     functions: { invoke: mockInvoke },
+    from: mockFrom,
   }),
 }));
 jest.mock('@/hooks/useSubscription', () => ({
   subscriptionKeys: { all: ['subscription'] },
   usePlan: () => ({ tier: 'free', plan: { name: 'Free', renderQuality: 'standard' } }),
 }));
+
+/** Chainable PostgREST stand-in: every call returns itself; awaiting resolves. */
+function tableBuilder(result: { data: unknown; error: unknown }) {
+  const chain: Record<string, unknown> = {};
+  for (const m of ['select', 'eq', 'insert', 'update', 'delete']) chain[m] = () => chain;
+  chain.single = async () => result;
+  chain.maybeSingle = async () => result;
+  chain.then = (resolve: (v: unknown) => unknown) => resolve(result);
+  return chain;
+}
 
 function wear(id: string, category: WardrobeItemRow['category']): WardrobeItemRow {
   return {
@@ -49,6 +61,13 @@ const board = {
   outfitId: 'o1',
 } as OutfitBoard;
 
+const localBoard = {
+  ...board,
+  key: 'local-1',
+  source: 'local',
+  outfitId: undefined,
+} as OutfitBoard;
+
 const ctx = {
   tempC: 20,
   rainPct: 0,
@@ -62,18 +81,19 @@ const httpError = (status: number, body: unknown) => ({
   error: new FunctionsHttpError(new Response(JSON.stringify(body), { status })),
 });
 
-function wrapper() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  );
+let client: QueryClient;
+function wrapper({ children }: { children: ReactNode }) {
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
-const renderAi = () => renderHook(() => useAiRender(board, ctx), { wrapper: wrapper() });
+const renderAi = (b: OutfitBoard = board, onPersisted?: (outfitId: string) => void) =>
+  renderHook(() => useAiRender(b, ctx, onPersisted), { wrapper });
 
 beforeEach(() => {
   jest.clearAllMocks();
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   mockGetSession.mockResolvedValue({ data: { session: { user: { id: 'user-1' } } } });
+  mockFrom.mockImplementation(() => tableBuilder({ data: { id: 'draft-1' }, error: null }));
 });
 
 it('renders the server image on a successful preview', async () => {
@@ -91,6 +111,74 @@ it('renders the server image on a successful preview', async () => {
   expect(result.current.previewCapped).toBe(false);
   expect(result.current.failure).toBeNull();
   expect(result.current.previewUsage).toEqual({ used: 1, limit: 1 });
+});
+
+it('persists against the existing row and never creates a draft for an AI board', async () => {
+  mockInvoke.mockResolvedValue({
+    data: { renderUrl: 'https://cdn/render.png', quality: 'standard' },
+    error: null,
+  });
+  const { result } = await renderAi();
+
+  await act(async () => {
+    await result.current.generate();
+  });
+
+  expect(mockInvoke.mock.calls[0][1].body.outfitId).toBe('o1');
+  expect(mockFrom).not.toHaveBeenCalled();
+  expect(result.current.outfitId).toBe('o1');
+});
+
+it('creates a draft row for an on-device board and exposes its id', async () => {
+  const onPersisted = jest.fn();
+  mockInvoke.mockResolvedValue({
+    data: { renderUrl: 'https://cdn/render.png', quality: 'standard' },
+    error: null,
+  });
+  const { result } = await renderAi(localBoard, onPersisted);
+
+  await act(async () => {
+    await result.current.generate();
+  });
+
+  await waitFor(() => expect(mockFrom).toHaveBeenCalledWith('outfits'));
+  expect(mockInvoke.mock.calls[0][1].body.outfitId).toBe('draft-1');
+  expect(onPersisted).toHaveBeenCalledWith('draft-1');
+  expect(result.current.outfitId).toBe('draft-1');
+});
+
+it('shows a saved render immediately without spending a preview', async () => {
+  const saved = { ...board, renderUrl: 'https://signed/render.png' } as OutfitBoard;
+  const { result } = await renderAi(saved);
+
+  expect(result.current.url).toBe('https://signed/render.png');
+  expect(result.current.started).toBe(true);
+  expect(result.current.isLoading).toBe(false);
+  expect(mockInvoke).not.toHaveBeenCalled();
+});
+
+it('keeps a rendered preview when switching options and back (no re-spend)', async () => {
+  mockInvoke.mockResolvedValue({
+    data: { renderUrl: 'https://cdn/render.png', quality: 'standard' },
+    error: null,
+  });
+  const other = { ...board, key: 'ai-o2', outfitId: 'o2' } as OutfitBoard;
+  const { result, rerender } = await renderHook(
+    ({ b }: { b: OutfitBoard }) => useAiRender(b, ctx),
+    { wrapper, initialProps: { b: board } },
+  );
+
+  await act(async () => {
+    await result.current.generate();
+  });
+  await waitFor(() => expect(result.current.url).toBe('https://cdn/render.png'));
+
+  await rerender({ b: other });
+  expect(result.current.url).toBeNull();
+
+  await rerender({ b: board });
+  expect(result.current.url).toBe('https://cdn/render.png');
+  expect(mockInvoke).toHaveBeenCalledTimes(1);
 });
 
 it('never produces a fallback URL when previews are spent (429)', async () => {

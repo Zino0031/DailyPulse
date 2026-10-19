@@ -24,6 +24,11 @@ export interface OutfitBoard {
   source: 'local' | 'ai';
   /** `outfits` row the AI pick already created (saving flips is_saved). */
   outfitId?: string;
+  /**
+   * Displayable URL of a render already persisted for this row (issue #50),
+   * so opening a saved look shows the AI image without re-rendering.
+   */
+  renderUrl?: string | null;
 }
 
 // Formality compatibility: exact match scores highest.

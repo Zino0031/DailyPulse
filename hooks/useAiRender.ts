@@ -6,6 +6,7 @@ import { subscriptionKeys, usePlan } from '@/hooks/useSubscription';
 import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
 import type { OutfitBoard, OutfitContext } from '@/services/outfit';
 import { LIMIT_ERRORS, type RenderQuality } from '@/supabase/functions/_shared/tiers';
+import { lookbookKeys, savedOutfitKeys } from '@/utils/queryKeys';
 
 function seedFromKey(key: string): number {
   let hash = 0;
@@ -25,6 +26,41 @@ const REMOTE_TIMEOUT_MS = 60000;
 export type PreviewFailure = 'engine' | 'sign_in' | 'outfit';
 
 /**
+ * Persist an on-device board as an unsaved draft so its preview render has a
+ * row to attach to (issue #50). AI boards already have a row and never reach
+ * here. The row is invisible in the Lookbook until Save flips `is_saved`.
+ */
+async function createDraftOutfit(
+  userId: string,
+  board: OutfitBoard,
+  ctx: OutfitContext,
+): Promise<string | null> {
+  const { data, error } = await getSupabase()
+    .from('outfits')
+    .insert({
+      user_id: userId,
+      item_ids: [
+        board.top.id,
+        board.bottom.id,
+        board.shoes.id,
+        ...(board.outerwear ? [board.outerwear.id] : []),
+        ...(board.accessory ? [board.accessory.id] : []),
+      ],
+      weather_summary: {
+        tempC: ctx.tempC,
+        rainPct: ctx.rainPct,
+      } as Record<string, unknown>,
+      mood: ctx.mood,
+      event_summary: ctx.dress,
+      is_saved: false,
+    })
+    .select('id')
+    .single();
+  if (error || !data) return null;
+  return data.id;
+}
+
+/**
  * Manual AI render for a board — runs ONLY when generate() is called
  * (button tap), never on option switches, to protect render quota.
  *
@@ -34,18 +70,37 @@ export type PreviewFailure = 'engine' | 'sign_in' | 'outfit';
  * stays null so the card offers the right message instead of a substituted
  * image. A render that was produced but failed to *load* is tracked
  * separately (`imageFailed`) so retrying never spends a second preview.
+ *
+ * The render is persisted against the outfit row (issue #50): `outfitId` is
+ * sent so a re-opened look shows the saved image without a second preview.
+ * On-device boards get a draft row on first preview, and its id is surfaced
+ * through `outfitId`/`onPersisted` so Save reuses it instead of inserting.
  */
-export function useAiRender(board: OutfitBoard | undefined, ctx: OutfitContext) {
+export function useAiRender(
+  board: OutfitBoard | undefined,
+  ctx: OutfitContext,
+  onPersisted?: (outfitId: string) => void,
+) {
   // Pro previews render in HD; the server applies the same rule itself.
   const { plan } = usePlan();
   const planQuality = plan.renderQuality;
   const queryClient = useQueryClient();
+  // Kept in a ref so an inline callback from the screen never re-runs effects.
+  const onPersistedRef = useRef(onPersisted);
+  onPersistedRef.current = onPersisted;
+  // Renders produced this session, keyed by board. Switching options resets
+  // the hook, so without this switching back would drop the image (and a
+  // re-tap would spend another preview) — issue #50 note.
+  const sessionRef = useRef(
+    new Map<string, { url: string; quality: RenderQuality; rowId: string | null }>(),
+  );
 
-  const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
+  const [rowId, setRowId] = useState<string | null>(board?.outfitId ?? null);
+  const [remoteUrl, setRemoteUrl] = useState<string | null>(board?.renderUrl ?? null);
   const [remoteQuality, setRemoteQuality] = useState<RenderQuality | null>(null);
-  const [started, setStarted] = useState(false);
+  const [started, setStarted] = useState(Boolean(board?.renderUrl));
   const [working, setWorking] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(Boolean(board?.renderUrl));
   const [imageFailed, setImageFailed] = useState(false);
   const [imageRetryKey, setImageRetryKey] = useState(0);
   const [previewCapped, setPreviewCapped] = useState(false);
@@ -57,18 +112,24 @@ export function useAiRender(board: OutfitBoard | undefined, ctx: OutfitContext) 
   // stop — never by calling the (billable) function again (issue #46).
   const retriedImage = useRef(false);
 
-  // Switching boards resets to the photo view — a fresh tap re-renders.
+  // Switching boards shows that board's saved render immediately (or the
+  // empty state) — a fresh tap still re-renders and overwrites it.
   useEffect(() => {
-    setRemoteUrl(null);
-    setRemoteQuality(null);
-    setStarted(false);
+    const key = board?.key;
+    const cached = key ? sessionRef.current.get(key) : undefined;
+    const saved = board?.renderUrl ?? cached?.url ?? null;
+    setRowId(board?.outfitId ?? cached?.rowId ?? null);
+    setRemoteUrl(saved);
+    setRemoteQuality(cached?.quality ?? null);
+    setStarted(Boolean(saved));
     setWorking(false);
-    setLoaded(false);
+    setLoaded(Boolean(saved));
     setImageFailed(false);
     setImageRetryKey(0);
     retriedImage.current = false;
     setPreviewCapped(false);
     setFailure(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board?.key]);
 
   const generate = useCallback(async () => {
@@ -92,17 +153,35 @@ export function useAiRender(board: OutfitBoard | undefined, ctx: OutfitContext) 
       try {
         const supabase = getSupabase();
         const { data } = await supabase.auth.getSession();
-        if (!data.session) {
+        const user = data.session?.user;
+        if (!user) {
           reason = 'sign_in';
         } else {
-          const pieces = [board.top, board.bottom, board.shoes, board.outerwear, board.accessory]
-            .filter((i) => i !== null);
+          // Attach the render to an outfit row so it can be reused everywhere.
+          let targetId = rowId;
+          if (!targetId) {
+            targetId = await createDraftOutfit(user.id, board, ctx);
+            if (targetId) {
+              setRowId(targetId);
+              onPersistedRef.current?.(targetId);
+            }
+          }
+          const pieces = [
+            board.top,
+            board.bottom,
+            board.shoes,
+            board.outerwear,
+            board.accessory,
+          ].filter((i) => i !== null);
           const call = supabase.functions.invoke<{
             renderUrl?: string;
             quality?: RenderQuality;
             usage?: { used: number; limit: number | null };
           }>('render-outfit', {
             body: {
+              // Persist when we have (or just created) a row; only fall back
+              // to the raw items when the draft couldn't be written.
+              ...(targetId ? { outfitId: targetId } : {}),
               items: pieces.map((i) => ({
                 image_url: i.image_url,
                 category: i.category,
@@ -122,7 +201,13 @@ export function useAiRender(board: OutfitBoard | undefined, ctx: OutfitContext) 
             if (!error && result?.renderUrl) {
               gotRender = true;
               setRemoteUrl(result.renderUrl);
-              setRemoteQuality(result.quality ?? 'standard');
+              const quality = result.quality ?? 'standard';
+              setRemoteQuality(quality);
+              sessionRef.current.set(board.key, {
+                url: result.renderUrl,
+                quality,
+                rowId: targetId,
+              });
             }
             if (result?.usage) setPreviewUsage(result.usage);
             if (error instanceof FunctionsHttpError) {
@@ -161,7 +246,13 @@ export function useAiRender(board: OutfitBoard | undefined, ctx: OutfitContext) 
     // The server moved today's preview counter; refresh the meter.
     void queryClient.invalidateQueries({ queryKey: subscriptionKeys.all });
     setWorking(false);
-  }, [board, ctx, working, queryClient]);
+    if (gotRender) {
+      // The row now carries a new render — refresh the Lookbook thumbnail and
+      // the saved-row cache so they show it (issue #50).
+      void queryClient.invalidateQueries({ queryKey: lookbookKeys.all });
+      void queryClient.invalidateQueries({ queryKey: savedOutfitKeys.all });
+    }
+  }, [board, ctx, working, rowId, queryClient]);
 
   const retry = useCallback(() => {
     void generate();
@@ -200,6 +291,8 @@ export function useAiRender(board: OutfitBoard | undefined, ctx: OutfitContext) 
     /** The render exists but its image wouldn't load (never re-spend for this). */
     imageFailed,
     previewUsage,
+    /** Row the render is attached to — Save should flip this instead of inserting. */
+    outfitId: rowId,
     generate,
     onLoad: () => setLoaded(true),
     onError,
