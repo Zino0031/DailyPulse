@@ -20,7 +20,7 @@ import {
 import * as SplashScreen from 'expo-splash-screen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, useIsRestoring } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -58,14 +58,28 @@ const queryClient = new QueryClient({
   },
 });
 
+const PERSIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Queries with no live observer between mounts are garbage-collected on the
+// 5-minute default, and that removal is itself persisted — evicting an intent
+// the persister keeps for 7 days and breaking the resume path (#44). Hold the
+// two outfit keys for at least as long as the persisted blob.
+queryClient.setQueryDefaults(['outfit-pending'], { gcTime: PERSIST_MAX_AGE_MS });
+queryClient.setQueryDefaults(['outfit-last'], { gcTime: PERSIST_MAX_AGE_MS });
+
 // Offline-readable cache (PRD §4): wardrobe + last weather + last outfit are
-// persisted (see utils/queryCache.ts). Calendar, profile and usage are cheap
-// to refetch and go stale fast, so they stay in memory only.
+// persisted (see utils/queryCache.ts), plus the in-flight generation intent so
+// a refresh mid-generation can resume instead of spending twice (#44).
+// Calendar, profile and usage are cheap to refetch and go stale fast, so they
+// stay in memory only.
+//
+// The persister throttles writes (~1s by default), so a refresh within about a
+// second of the tap can still miss the intent. That's acceptable given the
+// stylist's latency, but it isn't a guarantee (#44).
 const persister = createAsyncStoragePersister({
   storage: AsyncStorage,
   key: 'myoutfit-query-cache',
 });
-const PERSIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
@@ -149,9 +163,13 @@ function BootGate({
   const segments = useSegments();
   const { session, isLoading, isRecovering } = useAuth();
   const profile = useProfileDetails();
+  // Persisted caches (incl. the in-flight generation intent) restore
+  // asynchronously in v5. Rendering the tree before that would let the outfit
+  // hook mint a fresh id and spend a second generation (#44).
+  const isRestoring = useIsRestoring();
   usePurchasesIdentity();
 
-  const ready = fontsLoaded && !isLoading;
+  const ready = fontsLoaded && !isLoading && !isRestoring;
   // A failed read (offline, missing migration) never traps the user in
   // onboarding — only a loaded row without `onboarded_at` sends them there.
   const profileLoading = Boolean(session) && profile.isLoading;

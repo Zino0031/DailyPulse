@@ -11,6 +11,7 @@ describe('shouldPersistQuery', () => {
     expect(shouldPersistQuery(query(['closet', 'user-1', 'items']))).toBe(true);
     expect(shouldPersistQuery(query(['weather', 36.75, 3.06]))).toBe(true);
     expect(shouldPersistQuery(query(['outfit-last', 'user-1']))).toBe(true);
+    expect(shouldPersistQuery(query(['outfit-pending', 'user-1']))).toBe(true);
   });
 
   it('never persists volatile or unrelated queries', () => {
@@ -26,6 +27,11 @@ describe('shouldPersistQuery', () => {
   });
 
   it('keeps the persisted roots in sync with the docs', () => {
-    expect([...PERSISTED_QUERY_ROOTS]).toEqual(['closet', 'weather', 'outfit-last']);
+    expect([...PERSISTED_QUERY_ROOTS]).toEqual([
+      'closet',
+      'weather',
+      'outfit-last',
+      'outfit-pending',
+    ]);
   });
 });

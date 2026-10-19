@@ -45,6 +45,18 @@ supabase secrets set GEMINI_API_KEY=<paste-key>
 supabase functions deploy generate-outfit
 ```
 
+Apply the migrations **before** deploying the function. Every intent now
+carries a client request id, recorded in `generation_requests`
+(`20261018000000_generation_requests.sql`, issue #44) so a refresh, a
+StrictMode double-effect or a retry replays the same generation instead of
+spending a second one. A function that finds no such table logs
+`idempotency unavailable` and generates without dedup.
+
+Reservations are kept for two days, then cleaned up by
+`20261018010000_generation_requests_retention.sql` (a `pg_cron` job when the
+extension is available) **and** opportunistically by the function itself on
+each call — so the table can't grow unbounded even without `pg_cron`.
+
 Verify (expect `capped`/`outfitId`, never a stack trace):
 
 ```bash
