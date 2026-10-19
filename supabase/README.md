@@ -72,6 +72,18 @@ from the app tsconfig and run on Deno). Until deployed, the app
 transparently falls back to the on-device composer — the "AI styled" vs
 "On-device" badge on each board shows which engine answered.
 
+`EXPO_PUBLIC_AI_GENERATION=false` forces that on-device composer (useful for
+offline dev and for testing the daily allowance without spending Gemini
+budget). The look is still metered: the app spends it through
+`consume_my_generation()` (`20261019130000_consume_my_generation.sql`), which
+scopes `consume_generation()` to `auth.uid()`. So Plus gets the same 3
+generation actions a day (1 look + Regenerate) with or without AI. Push the
+migration before flipping the switch:
+
+```bash
+supabase db push
+```
+
 ## render-outfit edge function (AI try-on imagery)
 
 Cloudflare Workers AI only (issue #45) — no cross-provider fallback.
@@ -106,13 +118,16 @@ fallback render.
 When the request carries an `outfitId`, the function stores the render's
 **storage path** (`renders/<user>/<uuid>.png`) in `outfits.rendered_image_url`
 and the app re-signs it on read (`services/renders.ts`) — so saved-look
-thumbnails outlive the 7-day signature. The service role uploads the object,
-so its `owner` is not the app user; the path-based read policy in
-`20261019000000_outfit_render_read_access.sql` lets owners sign their own
-renders. Push it before exercising the Lookbook:
+thumbnails outlive the 7-day signature. The object is uploaded with the
+caller's JWT, so `storage.objects.owner` is the app user and the generic
+owner-read policy can sign it; the fallback service-role upload (and older
+objects) is covered by the path-based policy in
+`20261019000000_outfit_render_read_access.sql`. `20261019120000_…_owner_backfill.sql`
+repairs ownership on renders written before the JWT upload. Push both before
+exercising the Lookbook:
 
 ```bash
-supabase db push                                # adds the outfits-bucket read policy
+supabase db push                                # read policy + owner backfill
 supabase functions deploy render-outfit         # persists the path (not the URL)
 ```
 
@@ -140,7 +155,7 @@ What enforces what:
 | Limit | Free | Plus | Pro | Enforced by |
 |---|---|---|---|---|
 | Closet items | 50 | 250 | unlimited | `enforce_closet_limit` trigger (insert fails with `closet_full`) |
-| AI outfits / day (UTC) | 1 | 3 | 20 | `consume_generation()` in `generate-outfit` (429) |
+| AI outfits / day (UTC) | 1 | 3 | 20 | `consume_generation()` in `generate-outfit`, `consume_my_generation()` for on-device |
 | Outfit options / generation | 1 | 3 | 5 | `generate-outfit` clamps `count` to the plan |
 | AI previews / day (UTC) | 1 | 5 | 20 | `consume_preview()` in `render-outfit` (429 `preview_limit`) |
 | Regenerate | locked (paywall) | ✓ | ✓ | `generate-outfit` + app gate (403 `regenerate_locked`) |

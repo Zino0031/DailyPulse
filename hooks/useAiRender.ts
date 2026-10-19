@@ -79,7 +79,7 @@ async function createDraftOutfit(
 export function useAiRender(
   board: OutfitBoard | undefined,
   ctx: OutfitContext,
-  onPersisted?: (outfitId: string) => void,
+  onPersisted?: (outfitId: string, boardKey: string) => void,
 ) {
   // Pro previews render in HD; the server applies the same rule itself.
   const { plan } = usePlan();
@@ -163,7 +163,10 @@ export function useAiRender(
             targetId = await createDraftOutfit(user.id, board, ctx);
             if (targetId) {
               setRowId(targetId);
-              onPersistedRef.current?.(targetId);
+              // Report the board this draft belongs to as well: the callback
+              // ref may already point at a different option if the user
+              // switched while the draft was being created (#50 follow-up).
+              onPersistedRef.current?.(targetId, board.key);
             }
           }
           const pieces = [

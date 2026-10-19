@@ -31,11 +31,17 @@ export async function resolveRenderUrls(
     else paths.push(value);
   }
   if (paths.length === 0) return resolved;
-  const { data } = await getSupabase()
+  const { data, error } = await getSupabase()
     .storage.from(RENDER_BUCKET)
     .createSignedUrls(paths, SIGNED_URL_TTL_S);
+  if (__DEV__ && error) {
+    console.warn('[renders] could not sign persisted previews:', error.message);
+  }
   for (const entry of data ?? []) {
     if (entry.path && entry.signedUrl) resolved.set(entry.path, entry.signedUrl);
+    else if (__DEV__ && entry.error) {
+      console.warn('[renders] preview signature rejected:', entry.path, entry.error);
+    }
   }
   return resolved;
 }

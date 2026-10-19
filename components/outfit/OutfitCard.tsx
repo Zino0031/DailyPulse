@@ -69,7 +69,7 @@ export function OutfitCard({
   board: OutfitBoard;
   ctx: OutfitContext;
   /** Called with the outfit row a preview attached to, so Save reuses it. */
-  onPreviewPersisted?: (outfitId: string) => void;
+  onPreviewPersisted?: (outfitId: string, boardKey: string) => void;
 }) {
   const render = useAiRender(board, ctx, onPreviewPersisted);
   const { plan, tier } = usePlan();

@@ -30,30 +30,43 @@ interface LookbookTileProps {
  */
 export function LookbookTile({ entry, width, onOpen, onDelete }: LookbookTileProps) {
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Open saved look from ${formatDate(entry.createdAt)}`}
-      onPress={() => onOpen(entry)}
+    // The delete control is a sibling, not a child, of the open action:
+    // react-native-web renders `accessibilityRole="button"` as a real
+    // <button>, and nesting one <button> inside another is invalid DOM
+    // (React logs a hydration error on web).
+    <View
       style={width === undefined ? undefined : { width }}
       className={`relative${width === undefined ? ' w-full' : ''}`}>
-      {entry.thumbnailUrl ? (
-        <Image
-          source={{ uri: entry.thumbnailUrl, cacheKey: entry.thumbnailKey ?? undefined }}
-          recyclingKey={entry.id}
-          style={{ width: '100%', aspectRatio: 3 / 4, borderRadius: 12 }}
-          cachePolicy="memory-disk"
-          contentFit="cover"
-          transition={200}
-          priority="low"
-          enforceEarlyResizing
-        />
-      ) : (
-        <View
-          className="items-center justify-center rounded-xl bg-border"
-          style={{ width: '100%', aspectRatio: 3 / 4 }}>
-          <Text className="text-footnote text-text-muted">No preview</Text>
-        </View>
-      )}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open saved look from ${formatDate(entry.createdAt)}`}
+        onPress={() => onOpen(entry)}>
+        {entry.thumbnailUrl ? (
+          <Image
+            source={{ uri: entry.thumbnailUrl, cacheKey: entry.thumbnailKey ?? undefined }}
+            recyclingKey={entry.id}
+            style={{ width: '100%', aspectRatio: 3 / 4, borderRadius: 12 }}
+            cachePolicy="memory-disk"
+            contentFit="cover"
+            transition={200}
+            priority="low"
+            enforceEarlyResizing
+          />
+        ) : (
+          <View
+            className="items-center justify-center rounded-xl bg-border"
+            style={{ width: '100%', aspectRatio: 3 / 4 }}>
+            <Text className="text-footnote text-text-muted">No preview</Text>
+          </View>
+        )}
+        <Text className="mt-1 text-footnote font-medium text-text">
+          {formatDate(entry.createdAt)}
+        </Text>
+        <Text numberOfLines={1} className="text-caption text-text-muted">
+          {[entry.mood, entry.dressCode].filter(Boolean).join(' · ') ||
+            `${entry.itemCount} pieces`}
+        </Text>
+      </Pressable>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Delete this saved look"
@@ -62,13 +75,6 @@ export function LookbookTile({ entry, width, onOpen, onDelete }: LookbookTilePro
         className="absolute right-1 top-1 h-8 w-8 items-center justify-center rounded-full bg-danger shadow-sm">
         <Trash2 size={14} strokeWidth={2} color="#FFFFFF" />
       </Pressable>
-      <Text className="mt-1 text-footnote font-medium text-text">
-        {formatDate(entry.createdAt)}
-      </Text>
-      <Text numberOfLines={1} className="text-caption text-text-muted">
-        {[entry.mood, entry.dressCode].filter(Boolean).join(' · ') ||
-          `${entry.itemCount} pieces`}
-      </Text>
-    </Pressable>
+    </View>
   );
 }

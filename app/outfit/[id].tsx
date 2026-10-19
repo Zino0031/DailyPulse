@@ -81,6 +81,7 @@ function GenerateFlow() {
     stage,
     resuming,
     stillPending,
+    aiUnavailable,
     checkAgain,
     emptyCloset,
     wardrobeError,
@@ -89,7 +90,7 @@ function GenerateFlow() {
     usage,
     plan,
     regenerateLock,
-    saved,
+    savedIds,
     saving,
     save,
     unsave,
@@ -100,10 +101,13 @@ function GenerateFlow() {
   const [selected, setSelected] = useState(0);
   // Outfit row a preview attached to, keyed by board — lets Save flip that
   // row (no duplicate) even for on-device boards that had no row before.
-  const [previewIds, setPreviewIds] = useState<Record<string, string>>({});
+  const [rowIds, setRowIds] = useState<Record<string, string>>({});
   const hero = boards[Math.min(selected, boards.length - 1)];
+  const heroId = hero ? (rowIds[hero.key] ?? hero.outfitId) : undefined;
   const savable =
-    hero && previewIds[hero.key] ? { ...hero, outfitId: previewIds[hero.key] } : hero;
+    hero && heroId ? { ...hero, outfitId: heroId } : hero;
+  // Saved state is per option: saving option 1 must not relabel option 2.
+  const savedId = heroId && savedIds.has(heroId) ? heroId : undefined;
 
   return (
     <ScrollView
@@ -210,8 +214,8 @@ function GenerateFlow() {
           <OutfitCard
             board={hero}
             ctx={ctx}
-            onPreviewPersisted={(outfitId) =>
-              setPreviewIds((ids) => ({ ...ids, [hero.key]: outfitId }))
+            onPreviewPersisted={(outfitId, boardKey) =>
+              setRowIds((ids) => ({ ...ids, [boardKey]: outfitId }))
             }
           />
           {boards.length > 1 && (
@@ -240,12 +244,12 @@ function GenerateFlow() {
             </View>
           )}
           <View className="gap-2">
-            {saved ? (
+            {savedId ? (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Unsave this outfit"
                 disabled={saving}
-                onPress={() => unsave(saved.id)}
+                onPress={() => unsave(savedId)}
                 className="h-12 items-center justify-center rounded-full border border-border bg-surface px-6">
                 <Text className="text-headline text-text">
                   {saving ? 'Unsaving…' : 'Saved ✓ — tap to unsave'}
@@ -257,7 +261,10 @@ function GenerateFlow() {
                 accessibilityLabel="Save this outfit"
                 disabled={saving}
                 onPress={() => {
-                  if (savable) void save(savable);
+                  if (!savable || !hero) return;
+                  void save(savable).then((id) => {
+                    if (id) setRowIds((ids) => ({ ...ids, [hero.key]: id }));
+                  });
                 }}
                 className="h-[52px] items-center justify-center rounded-full bg-primary px-6">
                 <Text className="text-headline text-white">
@@ -294,6 +301,14 @@ function GenerateFlow() {
             <Text testID="outfit-usage" className="text-center text-caption text-text-muted">
               {generationsLine(plan, usage)}
             </Text>
+            {aiUnavailable && (
+              <Text
+                testID="outfit-ai-unavailable"
+                className="text-center text-caption text-text-muted">
+                AI stylist is unavailable right now — this look was styled on-device. The daily
+                outfit allowance still applies.
+              </Text>
+            )}
           </View>
         </>
       )}
