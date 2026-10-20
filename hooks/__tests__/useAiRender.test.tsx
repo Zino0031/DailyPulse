@@ -143,7 +143,7 @@ it('creates a draft row for an on-device board and exposes its id', async () => 
 
   await waitFor(() => expect(mockFrom).toHaveBeenCalledWith('outfits'));
   expect(mockInvoke.mock.calls[0][1].body.outfitId).toBe('draft-1');
-  expect(onPersisted).toHaveBeenCalledWith('draft-1');
+  expect(onPersisted).toHaveBeenCalledWith('draft-1', 'local-1');
   expect(result.current.outfitId).toBe('draft-1');
 });
 

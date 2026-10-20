@@ -16,6 +16,9 @@ import { usageDay } from '@/supabase/functions/_shared/tiers';
 import type { Tier } from '@/types/database';
 
 let mockParams: { id: string } = { id: 'new' };
+/** `EXPO_PUBLIC_AI_GENERATION` switch, mocked per test. */
+let mockAiEnabled = true;
+jest.mock('@/utils/ai', () => ({ aiGenerationEnabled: () => mockAiEnabled }));
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => mockParams,
   Link: ({ children }: { children: ReactNode }) => children,
@@ -32,6 +35,9 @@ jest.mock('@/services/closet', () => ({
 /** Chainable PostgREST stand-in: every call returns itself; awaiting resolves. */
 const mockTables: Record<string, unknown> = {};
 const mockInvoke = jest.fn();
+/** `consume_my_generation` RPC (on-device mode). */
+const mockRpcSingle = jest.fn();
+const mockRpc = jest.fn(() => ({ single: mockRpcSingle }));
 jest.mock('@/services/supabase', () => {
   const builder = (table: string) => {
     const result = () => ({ data: mockTables[table] ?? null, error: null });
@@ -52,7 +58,16 @@ jest.mock('@/services/supabase', () => {
         getUser: async () => ({ data: { user: { id: 'user-1' } } }),
       },
       functions: { invoke: mockInvoke },
+      rpc: mockRpc,
       from: builder,
+      storage: {
+        from: () => ({
+          createSignedUrls: async (paths: string[]) => ({
+            data: paths.map((path) => ({ path, signedUrl: `https://signed/${path}` })),
+            error: null,
+          }),
+        }),
+      },
     }),
   };
 });
@@ -123,6 +138,13 @@ beforeEach(() => {
   // clearAllMocks keeps implementations; a mockReturnValue from one test would
   // otherwise leak a never-resolving promise into the next.
   mockInvoke.mockReset();
+  for (const table of Object.keys(mockTables)) delete mockTables[table];
+  mockAiEnabled = true;
+  mockRpcSingle.mockReset();
+  mockRpcSingle.mockResolvedValue({
+    data: { allowed: true, used: 1, daily_limit: 3, tier: 'plus' },
+    error: null,
+  });
   mockParams = { id: 'new' };
   client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
@@ -192,11 +214,20 @@ it('falls back to the on-device composer when the function is unreachable', asyn
 
 it('never spends a generation when opening a saved outfit', async () => {
   mockParams = { id: 'saved-1' };
-  mockTables.outfits = { id: 'saved-1', item_ids: ['t1', 'b1', 's1'], event_summary: 'casual', mood: null };
+  mockTables.outfits = {
+    id: 'saved-1',
+    item_ids: ['t1', 'b1', 's1'],
+    event_summary: 'casual',
+    mood: null,
+    rendered_image_url: 'renders/user-1/look.png',
+  };
   mockTables.wardrobe_items = mockItems;
   await renderScreen({ tier: 'free', used: 0 });
 
   expect(await screen.findByLabelText('Remove this outfit', {}, WAIT)).toBeTruthy();
+  // A persisted preview is shown directly — no "Preview with AI" re-spend path.
+  expect(await screen.findByLabelText('AI style preview of this outfit', {}, WAIT)).toBeTruthy();
+  expect(screen.queryByText('Preview with AI')).toBeNull();
   expect(mockInvoke).not.toHaveBeenCalled();
 });
 
@@ -229,8 +260,9 @@ it('renders the cached last look offline without calling the stylist', async () 
   expect(usePaywallStore.getState().reason).toBeNull();
 });
 
-it('still generates when only an on-device look was cached', async () => {
-  // A local board is free to recompose — it must not lock the user out of AI.
+it('restores a cached on-device look instead of spending again', async () => {
+  // Every look now spends the daily allowance, so a remount reuses the cached
+  // board rather than generating (and paying) for the same look again.
   client.setQueryData<LastOutfit>(outfitKeys.last(USER), {
     day: usageDay(),
     boards: [
@@ -251,8 +283,10 @@ it('still generates when only an on-device look was cached', async () => {
 
   await renderScreen({ tier: 'free', used: 0 });
 
-  expect(await screen.findByText('AI styled', {}, WAIT)).toBeTruthy();
-  expect(mockInvoke).toHaveBeenCalledTimes(1);
+  expect(await screen.findByText('On-device', {}, WAIT)).toBeTruthy();
+  expect(screen.getByText('On-device only')).toBeTruthy();
+  expect(mockInvoke).not.toHaveBeenCalled();
+  expect(mockRpc).not.toHaveBeenCalled();
 });
 
 // --- Issue #44: a refresh must never start a second generation --------------
@@ -277,14 +311,33 @@ it('resumes a persisted in-flight request instead of spending again', async () =
   expect(client.getQueryData<LastOutfit>(outfitKeys.last(USER))?.boards).toHaveLength(1);
 });
 
-it('keeps the intent when the stylist fails so a remount can replay it', async () => {
+it('charges the on-device fallback when the stylist fails without spending', async () => {
   mockInvoke.mockResolvedValue({ data: null, error: new FunctionsFetchError('down') });
 
-  await renderScreen({ tier: 'free', used: 0 });
+  await renderScreen({ tier: 'plus', used: 0 });
 
   expect(await screen.findByText('On-device', {}, WAIT)).toBeTruthy();
-  // A spend may have landed without a response: the intent must survive so the
-  // next mount replays it at no extra cost instead of charging for a lost look.
+  // The server count didn't move, so the fallback look is charged like any
+  // other generation and the intent is settled.
+  expect(mockRpc).toHaveBeenCalledWith('consume_my_generation');
+  expect(client.getQueryData(outfitKeys.pending(USER))).toBeUndefined();
+  // Cached, so a remount reuses the look instead of spending again.
+  expect(client.getQueryData<LastOutfit>(outfitKeys.last(USER))?.boards).toHaveLength(1);
+});
+
+it('keeps the intent and does not double-charge when the AI already spent', async () => {
+  mockInvoke.mockImplementation(async () => {
+    // The function reserved a generation even though the response was lost.
+    mockTables.generation_usage = { used: 1 };
+    return { data: null, error: new FunctionsFetchError('down') };
+  });
+
+  await renderScreen({ tier: 'plus', used: 0 });
+
+  expect(await screen.findByText('On-device', {}, WAIT)).toBeTruthy();
+  expect(mockRpc).not.toHaveBeenCalled();
+  expect(screen.getByText('2 of 3 AI outfits left today.')).toBeTruthy();
+  // The paid intent survives so a remount can replay the recorded result.
   const pending = client.getQueryData<{ requestId: string }>(outfitKeys.pending(USER));
   expect(pending?.requestId).toBe(mockInvoke.mock.calls[0][1].body.requestId);
 });
@@ -357,19 +410,20 @@ it('does not hang the spinner when the effect re-runs mid-flight (StrictMode)', 
 });
 
 it('replays a pending intent on Regenerate instead of spending a new one', async () => {
-  mockInvoke.mockResolvedValueOnce({ data: null, error: new FunctionsFetchError('down') });
-  await renderScreen({ tier: 'plus', used: 0 });
-  // The unreachable function keeps the intent and shows the on-device look.
-  expect(await screen.findByText('On-device', {}, WAIT)).toBeTruthy();
-  const pending = client.getQueryData<{ requestId: string }>(outfitKeys.pending(USER));
-  expect(pending?.requestId).toBeTruthy();
-  const firstId = mockInvoke.mock.calls[0][1].body.requestId;
-
-  // Regenerate must replay the pending intent before minting a new one.
   mockInvoke.mockResolvedValue(aiPick(2));
+  await renderScreen({ tier: 'plus', used: 1 });
+  await screen.findByText('AI styled', {}, WAIT);
+
+  // A pending intent still owns a generation — Regenerate must replay it.
+  client.setQueryData(outfitKeys.pending(USER), {
+    requestId: 'req-pending-1',
+    day: usageDay(),
+    regenerate: true,
+    excludeTopIds: [],
+  });
   await fireEvent.press(screen.getByTestId('outfit-regenerate'));
   await waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(2));
-  expect(mockInvoke.mock.calls[1][1].body.requestId).toBe(firstId);
+  expect(mockInvoke.mock.calls[1][1].body.requestId).toBe('req-pending-1');
 });
 
 it('mints a fresh request id when the user regenerates', async () => {
@@ -384,6 +438,115 @@ it('mints a fresh request id when the user regenerates', async () => {
   await waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(2));
   // A regenerate is a new intent — it must not replay the previous request.
   expect(mockInvoke.mock.calls[1][1].body.requestId).not.toBe(first);
+});
+
+it('tracks saved state per option instead of marking every option saved', async () => {
+  mockInvoke.mockResolvedValue(aiPick(1, 2));
+  await renderScreen({ tier: 'plus', used: 0 });
+
+  // Save option 1.
+  await screen.findByText('Option 2', {}, WAIT);
+  await fireEvent.press(screen.getByLabelText('Save this outfit'));
+  expect(await screen.findByLabelText('Unsave this outfit', {}, WAIT)).toBeTruthy();
+
+  // Option 2 is a different row — it must still offer Save.
+  await fireEvent.press(screen.getByLabelText('Preview option 2'));
+  expect(screen.getByText('Save this look')).toBeTruthy();
+  expect(screen.queryByLabelText('Unsave this outfit')).toBeNull();
+
+  // Switching back restores option 1's saved state.
+  await fireEvent.press(screen.getByLabelText('Preview option 1'));
+  expect(screen.getByText('Saved ✓ — tap to unsave')).toBeTruthy();
+});
+
+it('deducts a regeneration from the daily allowance', async () => {
+  mockInvoke.mockResolvedValueOnce(aiPick(1));
+  await renderScreen({ tier: 'plus', used: 0 });
+  await screen.findByText('AI styled', {}, WAIT);
+  expect(screen.getByText('2 of 3 AI outfits left today.')).toBeTruthy();
+
+  mockInvoke.mockResolvedValueOnce(aiPick(2));
+  await fireEvent.press(screen.getByTestId('outfit-regenerate'));
+  await waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(2));
+  expect(await screen.findByText('1 of 3 AI outfits left today.', {}, WAIT)).toBeTruthy();
+});
+
+it('accepts the legacy single-outfit response instead of discarding it', async () => {
+  mockInvoke.mockResolvedValue({
+    data: {
+      outfitId: 'legacy-1',
+      itemIds: ['t1', 'b1', 's1'],
+      reasoning: ['Styled for 20°'],
+      usage: { used: 1, limit: null },
+    },
+    error: null,
+  });
+  await renderScreen({ tier: 'plus', used: 0 });
+
+  expect(await screen.findByText('AI styled', {}, WAIT)).toBeTruthy();
+  expect(screen.getByText('2 of 3 AI outfits left today.')).toBeTruthy();
+  expect(screen.queryByTestId('outfit-ai-unavailable')).toBeNull();
+});
+
+it('charges the on-device fallback so the meter reflects the press', async () => {
+  mockInvoke.mockResolvedValue({ data: null, error: new FunctionsFetchError('down') });
+  await renderScreen({ tier: 'plus', used: 0 });
+
+  expect(await screen.findByText('On-device', {}, WAIT)).toBeTruthy();
+  expect(screen.getByTestId('outfit-ai-unavailable')).toBeTruthy();
+  // The AI didn't spend, so the fallback look spends one like any generation.
+  expect(mockRpc).toHaveBeenCalledWith('consume_my_generation');
+  expect(screen.getByText('2 of 3 AI outfits left today.')).toBeTruthy();
+});
+
+it('meters an on-device generation and lets Plus regenerate', async () => {
+  mockAiEnabled = false;
+  await renderScreen({ tier: 'plus', used: 0 });
+
+  expect(await screen.findByText('On-device', {}, WAIT)).toBeTruthy();
+  expect(mockInvoke).not.toHaveBeenCalled();
+  expect(mockRpc).toHaveBeenCalledWith('consume_my_generation');
+  // The first on-device look spends a daily generation just like an AI one.
+  expect(screen.getByText('2 of 3 AI outfits left today.')).toBeTruthy();
+
+  mockRpcSingle.mockResolvedValueOnce({
+    data: { allowed: true, used: 2, daily_limit: 3, tier: 'plus' },
+    error: null,
+  });
+  await fireEvent.press(screen.getByTestId('outfit-regenerate'));
+  expect(await screen.findByText('1 of 3 AI outfits left today.', {}, WAIT)).toBeTruthy();
+});
+
+it('opens the paywall when the server refuses an on-device generation', async () => {
+  mockAiEnabled = false;
+  mockRpcSingle.mockResolvedValueOnce({
+    data: { allowed: false, used: 3, daily_limit: 3, tier: 'plus' },
+    error: null,
+  });
+  await renderScreen({ tier: 'plus', used: 2 });
+
+  expect(await screen.findByTestId('outfit-capped', {}, WAIT)).toBeTruthy();
+  expect(mockInvoke).not.toHaveBeenCalled();
+  expect(usePaywallStore.getState().reason).toBe('daily_limit');
+  // The look never lands on screen once the server says no.
+  expect(screen.queryByText('On-device')).toBeNull();
+});
+
+it('marks a fresh regenerate after a charged fallback', async () => {
+  mockInvoke.mockResolvedValueOnce(aiPick(1));
+  await renderScreen({ tier: 'plus', used: 0 });
+  await screen.findByText('AI styled', {}, WAIT);
+
+  // First Regenerate fails; the on-device fallback is charged and settles the
+  // intent, so the next press is a brand-new regenerate.
+  mockInvoke.mockResolvedValueOnce({ data: null, error: new FunctionsFetchError('down') });
+  await fireEvent.press(screen.getByTestId('outfit-regenerate'));
+  expect(await screen.findByText('On-device', {}, WAIT)).toBeTruthy();
+
+  mockInvoke.mockResolvedValueOnce(aiPick(2));
+  await fireEvent.press(screen.getByTestId('outfit-regenerate'));
+  await waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(3));
+  expect(mockInvoke.mock.calls[2][1].body.regenerate).toBe(true);
 });
 
 // Kept last: it defers the server response with a long-lived promise, which

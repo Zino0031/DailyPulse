@@ -380,10 +380,24 @@ Deno.serve(async (req) => {
     console.log('[render-outfit] rendered via', engine);
 
     const path = `renders/${user.id}/${crypto.randomUUID()}.png`;
-    const { error: uploadError } = await admin.storage
+    // Upload as the caller, not the service role. Storage then records
+    // `owner = auth.uid()`, so a later read can be signed by the standard
+    // owner policy as well as the path-based render policy (#50).
+    const { error: uploadError } = await userClient.storage
       .from('outfits')
       .upload(path, imageBytes, { contentType: 'image/png', upsert: false });
-    if (uploadError) throw uploadError;
+    if (uploadError) {
+      // Fall back to the service role rather than failing a paid render; the
+      // path-based select policy (20261019000000) still makes it readable.
+      console.warn(
+        '[render-outfit] user upload failed, using service role',
+        uploadError.message,
+      );
+      const { error: adminUploadError } = await admin.storage
+        .from('outfits')
+        .upload(path, imageBytes, { contentType: 'image/png', upsert: false });
+      if (adminUploadError) throw adminUploadError;
+    }
     const { data: signed, error: signError } = await admin.storage
       .from('outfits')
       .createSignedUrl(path, 7 * 24 * 3600);

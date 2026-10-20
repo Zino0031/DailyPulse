@@ -99,7 +99,7 @@ const httpError = (status: number, body: unknown) => ({
 
 function renderCard(
   overrides: Partial<OutfitBoard> = {},
-  onPreviewPersisted?: (outfitId: string) => void,
+  onPreviewPersisted?: (outfitId: string, boardKey: string) => void,
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const Wrapper = ({ children }: { children: ReactNode }) => (
@@ -154,7 +154,7 @@ it('creates a draft row for an on-device preview and reports it to the screen', 
   await renderCard({ outfitId: undefined, source: 'local' }, onPersisted);
   await fireEvent.press(screen.getByLabelText('Generate AI preview'));
 
-  await waitFor(() => expect(onPersisted).toHaveBeenCalledWith('draft-1'));
+  await waitFor(() => expect(onPersisted).toHaveBeenCalledWith('draft-1', 'ai-o1'));
   expect(mockInvoke.mock.calls[0][1].body.outfitId).toBe('draft-1');
 });
 

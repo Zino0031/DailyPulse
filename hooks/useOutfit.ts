@@ -14,6 +14,7 @@ import { useAuthStore } from '@/store/useAuthStore';
 import { showPaywall } from '@/store/usePaywallStore';
 import { LIMIT_ERRORS, usageDay } from '@/supabase/functions/_shared/tiers';
 import type { WardrobeItemRow } from '@/types/database';
+import { aiGenerationEnabled } from '@/utils/ai';
 import { lookbookKeys, savedOutfitKeys } from '@/utils/queryKeys';
 import {
   composeOutfits,
@@ -29,11 +30,6 @@ export const GENERATION_STAGES = [
 ] as const;
 
 const MIN_STAGE_MS = 450;
-
-export interface SavedOutfit {
-  id: string;
-  isSaved: boolean;
-}
 
 /**
  * Cache key for the last generated look. Persisted (utils/queryCache.ts) so a
@@ -134,6 +130,14 @@ async function composeRemote(
   if (!data.session) return null;
   const call = supabase.functions.invoke<{
     outfits?: { outfitId: string; itemIds: string[]; reasoning: string[] }[];
+    /**
+     * Pre-#42 deployments returned one outfit instead of `outfits[]`. Accept
+     * it so a stale function doesn't make the app throw away a real (and
+     * possibly paid) result and silently fall back to on-device.
+     */
+    outfitId?: string;
+    itemIds?: string[];
+    reasoning?: string[];
     usage?: { used: number; limit: number | null };
     /** Present on a 202: another invocation is still generating this intent. */
     pending?: boolean;
@@ -181,10 +185,22 @@ async function composeRemote(
   // A 202 (`generation_pending`) is not a failure: the caller retries the same
   // id instead of treating it as an unreachable function.
   if (picks?.pending) throw new PendingError();
-  if (!picks?.outfits?.length) return null;
+  const outfitPicks =
+    picks?.outfits?.length
+      ? picks.outfits
+      : picks?.outfitId && picks.itemIds
+        ? [
+            {
+              outfitId: picks.outfitId,
+              itemIds: picks.itemIds,
+              reasoning: picks.reasoning ?? [],
+            },
+          ]
+        : [];
+  if (outfitPicks.length === 0) return null;
   const byId = new Map(items.map((i) => [i.id, i]));
   const boards: OutfitBoard[] = [];
-  for (const pick of picks.outfits) {
+  for (const pick of outfitPicks) {
     const [top, bottom, shoes, ...rest] = pick.itemIds
       .map((id) => byId.get(id))
       .filter((i): i is WardrobeItemRow => Boolean(i));
@@ -203,7 +219,7 @@ async function composeRemote(
     });
   }
   if (boards.length === 0) return null;
-  return { used: picks.usage?.used ?? null, boards };
+  return { used: picks?.usage?.used ?? null, boards };
 }
 
 /**
@@ -231,6 +247,46 @@ function remoteCompose(
   return run;
 }
 
+interface ChannelSpend {
+  allowed: boolean;
+  used: number;
+  daily_limit: number | null;
+  tier: string;
+}
+
+/**
+ * Spend one of the plan's daily generations for an on-device look. The server
+ * wrapper scopes the spend to `auth.uid()`, so Regenerate is metered the same
+ * with or without AI (`EXPO_PUBLIC_AI_GENERATION`). Returns null when the call
+ * can't be made (offline, migration missing); the look still composes, it just
+ * can't be recorded.
+ */
+async function consumeMyGeneration(): Promise<ChannelSpend | null> {
+  if (!isSupabaseConfigured()) return null;
+  const { data, error } = await getSupabase()
+    .rpc('consume_my_generation')
+    .single<ChannelSpend>();
+  if (error || !data) return null;
+  return data;
+}
+
+/**
+ * Today's server-side generation count. Used before charging an on-device
+ * fallback: a timed-out AI call may still have reserved a generation, and one
+ * press must never consume two.
+ */
+async function currentGenerationUsed(userId: string | null): Promise<number | null> {
+  if (!userId || !isSupabaseConfigured()) return null;
+  const { data, error } = await getSupabase()
+    .from('generation_usage')
+    .select('used')
+    .eq('user_id', userId)
+    .eq('day', usageDay())
+    .maybeSingle();
+  if (error) return null;
+  return data?.used ?? 0;
+}
+
 /** Weather + calendar + mood + wearer — what the stylist and renders use. */
 export function useOutfitContext(): OutfitContext {
   const { data: weather } = useWeather();
@@ -251,12 +307,17 @@ export function useOutfitContext(): OutfitContext {
 
 /** Deletes a saved outfit row (the read-only saved view's "Remove"). */
 export function useRemoveOutfit() {
+  const queryClient = useQueryClient();
   const [removing, setRemoving] = useState(false);
   async function remove(outfitId: string): Promise<void> {
     if (!isSupabaseConfigured()) return;
     setRemoving(true);
     try {
       await getSupabase().from('outfits').delete().eq('id', outfitId);
+      // The Lookbook tab stays mounted, so deleting a row must evict it from
+      // both caches or the removed look lingers until the next refetch (#50).
+      void queryClient.invalidateQueries({ queryKey: lookbookKeys.all });
+      void queryClient.invalidateQueries({ queryKey: savedOutfitKeys.all });
     } finally {
       setRemoving(false);
     }
@@ -317,16 +378,21 @@ export function useOutfit() {
   // Bumped by "Check again" — re-runs the effect without the regenerate
   // semantics that `runId` carries.
   const [retryToken, setRetryToken] = useState(0);
-  // A restored AI look for today is shown as-is — no auto-regeneration, so a
-  // cold/offline open is instant and costs no AI generation. On-device boards
-  // are free to recompose, so only AI picks opt out of generating.
-  const restoredIsAi =
-    restored !== null && restored.boards.some((b) => b.source === 'ai');
+  // A pending intent means no result was recorded yet — replay it before
+  // showing a cached look, so a paid generation isn't abandoned.
+  const hasPendingIntent = restoredPending !== null && restoredPending.day === usageDay();
+  // Restored looks (AI or on-device) are shown as-is — no auto-regeneration,
+  // so a cold/offline open is instant and costs no generation. This used to be
+  // AI-only because on-device looks were free to recompose; now every look
+  // spends the daily allowance, so a remount must reuse it rather than spend
+  // again.
   const showRestored =
-    runId === 0 && restored !== null && restored.day === usageDay() && restoredIsAi;
+    runId === 0 && restored !== null && restored.day === usageDay() && !hasPendingIntent;
   const [stage, setStage] = useState(0);
   const [blocked, setBlocked] = useState<PlanLimitError['reason'] | null>(null);
-  const [saved, setSaved] = useState<SavedOutfit | null>(null);
+  // Saved rows for this generation, keyed by id. A single `saved` flag made
+  // every option look saved after saving one of them (#50 follow-up).
+  const [savedIds, setSavedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [saving, setSaving] = useState(false);
   const [boards, setBoards] = useState<OutfitBoard[]>(
     showRestored && restored ? restored.boards : [],
@@ -335,6 +401,10 @@ export function useOutfit() {
   // The server still owns the intent (202) — show a "still styling" card with a
   // Check again action instead of a silent on-device look (#44).
   const [stillPending, setStillPending] = useState(false);
+  // The AI function was unreachable (or returned an unusable body), so the
+  // visible look came from the on-device composer. Surfaced to the user so an
+  // unchanged usage meter doesn't look like a broken Regenerate.
+  const [aiUnavailable, setAiUnavailable] = useState(false);
   // Resuming a persisted intent — the loading copy says so, so a refresh
   // doesn't read as a brand-new (billable) generation.
   const [resuming, setResuming] = useState(
@@ -345,18 +415,27 @@ export function useOutfit() {
   // usage refetch (a finished generation must not trigger another).
   const atLimitRef = useRef(usage.atLimit);
   atLimitRef.current = usage.atLimit;
+  // The allowance before the current intent started, used to tell whether the
+  // AI call already spent when we have to fall back on-device.
+  const usageUsedRef = useRef(usage.used);
+  usageUsedRef.current = usage.used;
 
   const setUsed = (used: number | null) => {
     const key = subscriptionKeys.usage(userId, usageDay());
     if (used === null) void queryClient.invalidateQueries({ queryKey: key });
-    else queryClient.setQueryData<number>(key, used);
+    else {
+      // A slower refetch (e.g. the one a failed fallback kicked off) must not
+      // land afterwards and overwrite the server's just-returned count with a
+      // stale snapshot — otherwise a paid regenerate looks unspent.
+      void queryClient.cancelQueries({ queryKey: key });
+      queryClient.setQueryData<number>(key, used);
+    }
   };
 
-  /** Persist the last AI-styled look so the next launch renders it before the network. */
+  /** Persist the last look so the next launch renders it before the network. */
   function rememberOutfit(next: OutfitBoard[]) {
-    const ai = next.filter((b) => b.source === 'ai');
-    if (ai.length === 0) return; // on-device boards recompose for free
-    queryClient.setQueryData<LastOutfit>(lastKey, { boards: ai, day: usageDay() });
+    if (next.length === 0) return;
+    queryClient.setQueryData<LastOutfit>(lastKey, { boards: next, day: usageDay() });
   }
 
   /** Persist the intent BEFORE the call so a refresh can resume it (#44). */
@@ -420,21 +499,52 @@ export function useOutfit() {
     if (settledRef.current === requestIdRef.current) return;
     const requestId = requestIdRef.current;
     // A resumed intent keeps its original regenerate / exclude semantics.
+    // Read the cache rather than the mount-time snapshot: an in-session
+    // Regenerate replay also has to remember that it was a regenerate (#44).
+    const pendingIntent = queryClient.getQueryData<PendingGeneration>(pendingKey);
     const resumingIntent =
-      restoredPending !== null &&
-      restoredPending.day === usageDay() &&
-      restoredPending.requestId === requestId;
-    const regenerate = resumingIntent ? Boolean(restoredPending?.regenerate) : runId > 0;
+      pendingIntent !== undefined &&
+      pendingIntent !== null &&
+      pendingIntent.day === usageDay() &&
+      pendingIntent.requestId === requestId;
+    const regenerate = resumingIntent ? Boolean(pendingIntent?.regenerate) : runId > 0;
     const excludeTopIds = resumingIntent
-      ? (restoredPending?.excludeTopIds ?? [])
+      ? (pendingIntent?.excludeTopIds ?? [])
       : seenTops.current;
-    rememberPending(requestId, regenerate, excludeTopIds);
+    const aiEnabled = aiGenerationEnabled();
     let cancelled = false;
     setStillPending(false);
     setBoardsPending(true);
     const maxBoards = plan.outfitOptions;
     (async () => {
       try {
+        if (!aiEnabled) {
+          // On-device mode (EXPO_PUBLIC_AI_GENERATION=false). The look is free
+          // to compute, but it still spends a daily generation so the plan's
+          // Regenerate allowance is identical with or without AI.
+          const spend = await consumeMyGeneration();
+          if (cancelled) return;
+          settledRef.current = requestId;
+          setResuming(false);
+          setAiUnavailable(false);
+          clearPending();
+          if (spend && !spend.allowed) {
+            setBlocked('daily_limit');
+            setUsed(spend.used);
+            if (runId === 0) setBoards([]);
+            return;
+          }
+          const next = composeOutfits(items, ctx, runId).slice(0, maxBoards);
+          setBoards(next);
+          rememberOutfit(next);
+          setUsed(spend ? spend.used : null);
+          return;
+        }
+        rememberPending(requestId, regenerate, excludeTopIds);
+        // Fresh baseline for the fallback reconciliation below. The usage query
+        // is cached for a minute, so read the server rather than trust it.
+        const usedAtStart = (await currentGenerationUsed(userId)) ?? usageUsedRef.current;
+        if (cancelled) return;
         let remote: RemoteResult | null = null;
         for (let attempt = 0; ; attempt++) {
           try {
@@ -463,6 +573,7 @@ export function useOutfit() {
         if (remote && remote.boards.length > 0) {
           settledRef.current = requestId;
           setResuming(false);
+          setAiUnavailable(false);
           seenTops.current = [...seenTops.current, remote.boards[0].top.id].slice(-6);
           const next = remote.boards.slice(0, maxBoards);
           setBoards(next);
@@ -470,14 +581,45 @@ export function useOutfit() {
           setUsed(remote.used);
           clearPending();
         } else {
-          // Unreachable function: no spend to protect, but keep the intent so a
-          // later mount retries rather than silently downgrading to on-device.
+          // The AI run produced no look. It may still have reserved a
+          // generation (timeout, or a late completion), so reconcile with the
+          // server before charging the on-device look — one press must never
+          // consume two. Every look now spends the daily allowance, whether it
+          // came from AI or the on-device composer.
+          setAiUnavailable(true);
+          const serverUsed = await currentGenerationUsed(userId);
+          if (cancelled) return;
+          settledRef.current = requestId;
           const next = composeOutfits(items, ctx, runId).slice(0, maxBoards);
+          if (serverUsed === null) {
+            // Can't tell whether the call spent; don't risk a double charge.
+            setBoards(next);
+            rememberOutfit(next);
+            setUsed(null);
+            return;
+          }
+          if (serverUsed > usedAtStart) {
+            // The AI already spent: keep the intent so a remount replays it,
+            // and show the server's real count.
+            setBoards(next);
+            rememberOutfit(next);
+            setUsed(serverUsed);
+            return;
+          }
+          // The AI didn't spend, so charge this on-device look like any other
+          // generation.
+          const spend = await consumeMyGeneration();
+          if (cancelled) return;
+          clearPending();
+          if (spend && !spend.allowed) {
+            setBlocked('daily_limit');
+            setUsed(spend.used);
+            if (runId === 0) setBoards([]);
+            return;
+          }
           setBoards(next);
           rememberOutfit(next);
-          // The meter may disagree with the screen after any side-effect-free
-          // path — re-read the truth instead of assuming no spend landed.
-          setUsed(null);
+          setUsed(spend ? spend.used : null);
         }
       } catch (e) {
         if (cancelled) return;
@@ -486,11 +628,13 @@ export function useOutfit() {
           // than showing an on-device look the user may have paid for.
           setStillPending(true);
           setResuming(false);
+          setAiUnavailable(false);
           setUsed(null);
         } else if (e instanceof PlanLimitError) {
           // Refused, so the intent is settled — nothing was spent to resume.
           settledRef.current = requestId;
           setResuming(false);
+          setAiUnavailable(false);
           clearPending();
           setBlocked(e.reason);
           if (e.reason === 'daily_limit') {
@@ -503,6 +647,7 @@ export function useOutfit() {
           // Unknown failure: a spend may have landed without a response. Keep
           // the intent so a remount replays it (0 extra spend) instead of
           // charging again for a look the user never saw (#44).
+          setAiUnavailable(true);
           const next = composeOutfits(items, ctx, runId).slice(0, maxBoards);
           setBoards(next);
           rememberOutfit(next);
@@ -546,15 +691,16 @@ export function useOutfit() {
     try {
       const supabase = getSupabase();
       // AI picks already have a row — flip it instead of duplicating it.
-      if (board.outfitId) {
+      const existingId = board.outfitId;
+      if (existingId) {
         const { error } = await supabase
           .from('outfits')
           .update({ is_saved: true })
-          .eq('id', board.outfitId);
+          .eq('id', existingId);
         if (error) return null;
-        setSaved({ id: board.outfitId, isSaved: true });
+        setSavedIds((ids) => new Set(ids).add(existingId));
         invalidateLookbook();
-        return board.outfitId;
+        return existingId;
       }
       const { data } = await supabase.auth.getUser();
       const user = data.user;
@@ -581,7 +727,7 @@ export function useOutfit() {
         .select('id')
         .single();
       if (error || !row) return null;
-      setSaved({ id: row.id, isSaved: true });
+      setSavedIds((ids) => new Set(ids).add(row.id));
       invalidateLookbook();
       return row.id;
     } finally {
@@ -591,7 +737,11 @@ export function useOutfit() {
 
   async function unsave(outfitId: string): Promise<void> {
     if (!isSupabaseConfigured()) {
-      setSaved(null);
+      setSavedIds((ids) => {
+        const next = new Set(ids);
+        next.delete(outfitId);
+        return next;
+      });
       return;
     }
     // Unflag instead of deleting: a row may carry a persisted preview render
@@ -601,7 +751,11 @@ export function useOutfit() {
     setSaving(true);
     try {
       await getSupabase().from('outfits').update({ is_saved: false }).eq('id', outfitId);
-      setSaved(null);
+      setSavedIds((ids) => {
+        const next = new Set(ids);
+        next.delete(outfitId);
+        return next;
+      });
       invalidateLookbook();
     } finally {
       setSaving(false);
@@ -613,7 +767,6 @@ export function useOutfit() {
       showPaywall(regenerateLock === 'plan' ? 'regenerate' : 'daily_limit');
       return;
     }
-    setSaved(null);
     setBlocked(null);
     setStillPending(false);
     setResuming(false);
@@ -648,6 +801,8 @@ export function useOutfit() {
     /** True when the server still owns the intent (202) — offer Check again. */
     stillPending,
     checkAgain,
+    /** The visible look is on-device because the AI function failed. */
+    aiUnavailable,
     emptyCloset,
     wardrobeError,
     retryLoad,
@@ -655,7 +810,7 @@ export function useOutfit() {
     usage,
     plan,
     regenerateLock,
-    saved,
+    savedIds,
     saving: saving || removing,
     save,
     unsave,
