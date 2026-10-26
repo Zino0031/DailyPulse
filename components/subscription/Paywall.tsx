@@ -1,10 +1,10 @@
 import { Check } from 'lucide-react-native';
 import { useState } from 'react';
-import { Linking, Platform, Text, View } from 'react-native';
+import { Linking, Modal, Platform, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { StatusNote } from '@/components/closet/StatusNote';
 import { Button } from '@/components/ui/Button';
-import { Sheet } from '@/components/ui/Sheet';
 import {
   usePlan,
   usePlanOffers,
@@ -12,7 +12,7 @@ import {
   useRestorePurchases,
   type PlanChangeResult,
 } from '@/hooks/useSubscription';
-import { BRAND } from '@/hooks/useThemeTokens';
+import { BRAND, useThemeTokens } from '@/hooks/useThemeTokens';
 import {
   isBillingAvailable,
   isTestMode,
@@ -60,6 +60,9 @@ function resultNotice(result: PlanChangeResult, restoring: boolean): Notice | nu
  * The app's single paywall (issue #17), opened through `usePaywallStore`
  * with a reason so the headline explains what just happened. Shows the
  * current plan plus every upgrade, with store-localized prices.
+ *
+ * A native page sheet: on iOS it can be dragged down to dismiss (which calls
+ * `onRequestClose`); on Android it slides up full-screen and back closes it.
  */
 export function Paywall() {
   const reason = usePaywallStore((s) => s.reason);
@@ -67,20 +70,34 @@ export function Paywall() {
   const hide = usePaywallStore((s) => s.hide);
   const { tier } = usePlan();
   const copy = paywallCopy(reason ?? 'upgrade', tier);
+  const tokens = useThemeTokens();
+  const insets = useSafeAreaInsets();
 
   return (
-    <Sheet
+    <Modal
       visible={reason !== null}
-      onClose={hide}
-      title={copy.title}
-      description={copy.body}
-      scrollable
-      testID="paywall">
-      {/* Keyed per opening: no stale success / error from last time. */}
-      {reason !== null && (
-        <PaywallBody key={openCount} tier={tier} highlight={copy.highlight} onClose={hide} />
-      )}
-    </Sheet>
+      animationType="slide"
+      presentationStyle="pageSheet"
+      backdropColor={tokens.bg}
+      onRequestClose={hide}>
+      <ScrollView
+        testID="paywall"
+        className="flex-1 bg-bg"
+        contentContainerClassName="w-full max-w-xl self-center px-6 pt-2"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
+        keyboardShouldPersistTaps="handled">
+        {/* Grabber (DESIGN.md §7 Sheet): hints the sheet can be dragged down. */}
+        <View className="mb-4 h-1 w-9 self-center rounded-full bg-border" />
+        <Text accessibilityRole="header" className="text-title-3 font-semibold text-text">
+          {copy.title}
+        </Text>
+        <Text className="mb-5 mt-1 text-footnote text-text-muted">{copy.body}</Text>
+        {/* Keyed per opening: no stale success / error from last time. */}
+        {reason !== null && (
+          <PaywallBody key={openCount} tier={tier} highlight={copy.highlight} onClose={hide} />
+        )}
+      </ScrollView>
+    </Modal>
   );
 }
 

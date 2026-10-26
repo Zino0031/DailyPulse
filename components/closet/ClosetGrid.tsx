@@ -15,6 +15,8 @@ interface ClosetGridProps {
   refreshing: boolean;
   onRefresh: () => void;
   ListEmptyComponent?: ReactElement;
+  /** Extra bottom padding, e.g. for a tab bar floating over the grid. */
+  bottomInset?: number;
 }
 
 /** Responsive, virtualized closet grid with pull-to-refresh. */
@@ -24,6 +26,7 @@ export function ClosetGrid({
   refreshing,
   onRefresh,
   ListEmptyComponent,
+  bottomInset = 0,
 }: ClosetGridProps) {
   const { width } = useWindowDimensions();
   const { columns, tileWidth } = gridMetrics(width);
@@ -45,7 +48,7 @@ export function ClosetGrid({
         gap: GAP,
         paddingHorizontal: GUTTER,
         paddingTop: 12,
-        paddingBottom: 32,
+        paddingBottom: bottomInset + 32,
         width: '100%',
         maxWidth: MAX_CONTENT,
         alignSelf: 'center',
@@ -81,11 +84,17 @@ export function ClosetGridSkeleton() {
       className="w-full flex-row flex-wrap self-center"
       style={{ gap: GAP, paddingHorizontal: GUTTER, paddingTop: 12, maxWidth: MAX_CONTENT }}>
       {Array.from({ length: columns * 2 }, (_, i) => (
-        <View key={i} style={{ width: tileWidth }} className="overflow-hidden rounded-xl bg-surface shadow-md">
-          <View className="w-full bg-border" style={{ aspectRatio: 3 / 4 }} />
-          <View className="gap-2 p-3">
-            <View className="h-3.5 w-2/3 rounded-md bg-border" />
-            <View className="h-3 w-1/3 rounded-md bg-border" />
+        <View key={i} style={{ width: tileWidth }} className="rounded-xl bg-surface shadow-md">
+          <View className="w-full rounded-t-xl bg-border" style={{ aspectRatio: 3 / 4 }} />
+          {/* Same footer as the real card: bars sit in boxes the height of the
+              subhead / caption lines they stand in for, so nothing jumps. */}
+          <View className="gap-1 px-3 pb-3 pt-2">
+            <View className="h-5 justify-center">
+              <View className="h-3.5 w-2/3 rounded-md bg-border" />
+            </View>
+            <View className="h-4 justify-center">
+              <View className="h-3 w-1/3 rounded-md bg-border" />
+            </View>
           </View>
         </View>
       ))}

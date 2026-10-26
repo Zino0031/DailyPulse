@@ -8,6 +8,7 @@ import { AddItemSheet } from '@/components/closet/AddItemSheet';
 import { CategoryFilter } from '@/components/closet/CategoryFilter';
 import { ClosetGrid, ClosetGridSkeleton } from '@/components/closet/ClosetGrid';
 import { ClosetMutationNotice } from '@/components/closet/ClosetMutationNotice';
+import { useTabBarInset } from '@/components/navigation/FabTabBar';
 import { StatusNote } from '@/components/closet/StatusNote';
 import { Button } from '@/components/ui/Button';
 import { CATEGORY_LABEL } from '@/constants/wardrobe';
@@ -33,6 +34,7 @@ export default function ClosetScreen() {
   const counts = useMemo(() => countByCategory(items), [items]);
   const visible = useMemo(() => filterItems(items, filter), [items, filter]);
   const { plan } = usePlan();
+  const tabBarInset = useTabBarInset();
   const capacity = useClosetCapacity();
   const capacityNote = data ? closetNotice(plan, items.length) : null;
 
@@ -148,6 +150,7 @@ export default function ClosetScreen() {
             onPressItem={openItem}
             refreshing={isRefetching}
             onRefresh={() => refetch()}
+            bottomInset={tabBarInset}
             ListEmptyComponent={
               items.length === 0 ? (
                 <EmptyState
@@ -200,7 +203,7 @@ function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <View className="flex-1 items-center justify-center px-8 py-12">
+    <View className="flex-1 items-center justify-center px-6 py-12">
       <View className="mb-4 h-16 w-16 items-center justify-center rounded-full bg-primary-tint">
         <Shirt size={28} strokeWidth={1.5} color={BRAND.primary} />
       </View>

@@ -43,7 +43,7 @@ function SavedOutfitView({ id }: { id: string }) {
   return (
     <ScrollView
       className="flex-1 bg-bg"
-      contentContainerClassName="gap-4 px-6 pb-8 pt-12">
+      contentContainerClassName="gap-8 px-6 pb-8 pt-4">
       <Text className="text-title-1 font-bold text-text">Outfit</Text>
       {isLoading && <LoadingCard label="Opening your look" />}
       {!isLoading && (isError || !board) && (
@@ -63,8 +63,8 @@ function SavedOutfitView({ id }: { id: string }) {
               await remove(id);
               router.back();
             }}
-            className="h-11 items-center justify-center rounded-full border border-border bg-surface px-6">
-            <Text className="text-headline text-text">
+            className="h-11 items-center justify-center rounded-full border border-border bg-surface px-6 active:bg-primary-tint">
+            <Text className="text-headline font-semibold text-text">
               {saving ? 'Removing…' : 'Remove'}
             </Text>
           </Pressable>
@@ -112,25 +112,27 @@ function GenerateFlow() {
   return (
     <ScrollView
       className="flex-1 bg-bg"
-      contentContainerClassName="gap-4 px-6 pb-8 pt-12">
-      <Text className="text-title-1 font-bold text-text">
-        Today&apos;s outfits
-      </Text>
-      <View className="flex-row flex-wrap gap-2">
-        <View className="rounded-full bg-surface px-3 py-1.5 shadow-sm">
-          <Text className="text-caption font-medium text-text-muted">
-            {Math.round(ctx.tempC)}°
-          </Text>
-        </View>
-        <View className="rounded-full bg-surface px-3 py-1.5 shadow-sm">
-          <Text className="text-caption font-medium text-text-muted">
-            {ctx.dress}
-          </Text>
-        </View>
-        <View className="rounded-full bg-surface px-3 py-1.5 shadow-sm">
-          <Text className="text-caption font-medium text-text-muted">
-            {ctx.mood}
-          </Text>
+      contentContainerClassName="gap-8 px-6 pb-8 pt-4">
+      <View className="gap-4">
+        <Text className="text-title-1 font-bold text-text">
+          Today&apos;s outfits
+        </Text>
+        <View className="flex-row flex-wrap gap-2">
+          <View className="rounded-full bg-surface px-3 py-1.5 shadow-sm">
+            <Text className="text-caption font-medium text-text-muted">
+              {Math.round(ctx.tempC)}°
+            </Text>
+          </View>
+          <View className="rounded-full bg-surface px-3 py-1.5 shadow-sm">
+            <Text className="text-caption font-medium text-text-muted">
+              {ctx.dress}
+            </Text>
+          </View>
+          <View className="rounded-full bg-surface px-3 py-1.5 shadow-sm">
+            <Text className="text-caption font-medium text-text-muted">
+              {ctx.mood}
+            </Text>
+          </View>
         </View>
       </View>
 
@@ -250,8 +252,8 @@ function GenerateFlow() {
                 accessibilityLabel="Unsave this outfit"
                 disabled={saving}
                 onPress={() => unsave(savedId)}
-                className="h-12 items-center justify-center rounded-full border border-border bg-surface px-6">
-                <Text className="text-headline text-text">
+                className="h-[52px] items-center justify-center rounded-full border border-border bg-surface px-6 active:bg-primary-tint">
+                <Text className="text-headline font-semibold text-text">
                   {saving ? 'Unsaving…' : 'Saved ✓ — tap to unsave'}
                 </Text>
               </Pressable>
@@ -266,8 +268,8 @@ function GenerateFlow() {
                     if (id) setRowIds((ids) => ({ ...ids, [hero.key]: id }));
                   });
                 }}
-                className="h-[52px] items-center justify-center rounded-full bg-primary px-6">
-                <Text className="text-headline text-white">
+                className="h-[52px] items-center justify-center rounded-full bg-primary px-6 active:bg-primary-pressed">
+                <Text className="text-headline font-semibold text-white">
                   {saving ? 'Saving…' : 'Save this look'}
                 </Text>
               </Pressable>
@@ -287,11 +289,11 @@ function GenerateFlow() {
                 if (!regenerateLock) setSelected(0);
                 regenerate();
               }}
-              className="h-11 flex-row items-center justify-center gap-2 rounded-full border border-border bg-surface px-6">
+              className="h-[52px] flex-row items-center justify-center gap-2 rounded-full border border-border bg-surface px-6 active:bg-primary-tint">
               {regenerateLock && (
-                <Lock size={16} strokeWidth={1.75} color={tokens.textMuted} />
+                <Lock size={20} strokeWidth={1.75} color={tokens.textMuted} />
               )}
-              <Text className="text-headline text-text">Regenerate</Text>
+              <Text className="text-headline font-semibold text-text">Regenerate</Text>
               {regenerateLock === 'plan' && (
                 <View className="rounded-full bg-primary-tint px-2 py-0.5">
                   <Text className="text-caption font-semibold text-primary">Plus</Text>
@@ -362,7 +364,7 @@ function ErrorCard({
           accessibilityRole="button"
           accessibilityLabel="Retry"
           onPress={onRetry}
-          className="self-start rounded-full px-3 py-1.5">
+          className="h-11 justify-center self-start rounded-full px-3 active:bg-primary-tint">
           <Text className="text-callout font-medium text-primary">
             Try again
           </Text>

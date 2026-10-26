@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AvatarPreview } from "@/components/avatar/AvatarPreview";
 import { StatusNote } from "@/components/closet/StatusNote";
+import { useTabBarInset } from "@/components/navigation/FabTabBar";
 import { PlanSection } from "@/components/subscription/PlanSection";
 import { Button } from "@/components/ui/Button";
 import { ConfirmSheet } from "@/components/ui/Sheet";
@@ -19,6 +20,7 @@ import { hasErrors, validateProfile } from "@/utils/profile";
 /** Account details, edit / finish profile (issue #5) and sign out. */
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();
+  const tabBarInset = useTabBarInset();
   const queryClient = useQueryClient();
   const {
     data: profile,
@@ -52,7 +54,10 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView edges={["top"]} className="flex-1 bg-bg">
-      <ScrollView contentContainerClassName="w-full max-w-[640px] self-center px-6 pb-12 pt-4">
+      <ScrollView
+        contentContainerClassName="w-full max-w-[640px] self-center px-6 pt-4"
+        contentContainerStyle={{ paddingBottom: tabBarInset + 48 }}
+      >
         <Text
           accessibilityRole="header"
           className="text-title-1 font-bold text-text"
@@ -60,7 +65,7 @@ export default function ProfileScreen() {
           Profile
         </Text>
 
-        <View className="mt-6 flex-row items-center gap-4">
+        <View className="mt-8 flex-row items-center gap-4">
           <AvatarPreview size={72} />
           <View className="flex-1">
             <Text
@@ -81,7 +86,7 @@ export default function ProfileScreen() {
         </View>
 
         {isError && (
-          <View className="mt-6">
+          <View className="mt-8">
             <StatusNote
               tone="error"
               message={friendlyError(error, "Couldn't load your profile.")}
@@ -94,7 +99,7 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        <View className="p-6 mt-6 overflow-hidden rounded-2xl border border-border bg-surface">
+        <View className="mt-8 rounded-xl bg-surface px-5 py-1.5 shadow-md">
           <DetailRow
             label="Gender"
             value={
@@ -148,12 +153,7 @@ export default function ProfileScreen() {
             variant={incomplete ? "primary" : "secondary"}
             size="lg"
             className="mt-8"
-            onPress={() =>
-              router.push({
-                pathname: "/onboarding/profile-form",
-                params: { mode: "edit" },
-              })
-            }
+            onPress={() => router.push("/edit-profile")}
             accessibilityHint="Opens the profile form"
           />
         )}
@@ -197,7 +197,7 @@ function DetailRow({
 }) {
   return (
     <View
-      className={`flex-row items-center justify-between gap-4 px-4 py-3.5 ${last ? "" : "border-b border-border"}`}
+      className={`flex-row items-center justify-between gap-4 py-3.5 ${last ? "" : "border-b border-border"}`}
     >
       <Text className="shrink-0 text-callout text-text-muted">{label}</Text>
       {value === null && loading ? (

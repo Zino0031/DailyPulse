@@ -77,7 +77,7 @@ export function WeatherWidget({
           accessibilityLabel="Retry loading weather"
           onPress={() => refetch()}
           disabled={isFetching}
-          className="mt-3 self-start rounded-full px-3 py-1.5">
+          className="mt-3 h-11 justify-center self-start rounded-full px-3 active:bg-primary-tint">
           <Text className="text-callout font-medium text-primary">
             {isFetching ? 'Retrying…' : 'Try again'}
           </Text>
@@ -112,10 +112,10 @@ export function WeatherWidget({
             accessibilityLabel={locationAction.label}
             disabled={locationAction.active}
             onPress={locationAction.onPress}
-            className={`h-9 w-9 items-center justify-center rounded-full border ${
+            className={`h-11 w-11 items-center justify-center rounded-full border ${
               locationAction.active
                 ? 'border-transparent bg-primary-tint'
-                : 'border-border bg-surface'
+                : 'border-border bg-surface active:bg-primary-tint'
             }`}>
             <LocateFixed
               size={16}

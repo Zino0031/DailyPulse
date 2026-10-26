@@ -4,6 +4,7 @@ import { FlatList, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { StatusNote } from '@/components/closet/StatusNote';
+import { useTabBarInset } from '@/components/navigation/FabTabBar';
 import { LookbookTile } from '@/components/outfit/LookbookTile';
 import { ConfirmSheet } from '@/components/ui/Sheet';
 import { useDeleteLookbookEntry, useLookbookEntries } from '@/hooks/useLookbook';
@@ -21,6 +22,7 @@ export default function LookbookScreen() {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const { width } = useWindowDimensions();
   const { columns, tileWidth } = gridMetrics(width);
+  const tabBarInset = useTabBarInset();
 
   // Warm the disk cache for permanent thumbnails (legacy remote renders) so
   // the grid never flashes while scrolling. New AI renders and private signed
@@ -79,7 +81,7 @@ export default function LookbookScreen() {
           gap: GRID_GAP,
           paddingHorizontal: GRID_GUTTER,
           paddingTop: 12,
-          paddingBottom: 32,
+          paddingBottom: tabBarInset + 32,
           width: '100%',
           maxWidth: 1200,
           alignSelf: 'center',
@@ -89,7 +91,7 @@ export default function LookbookScreen() {
           isPending ? (
             <LookbookSkeleton columns={columns} tileWidth={tileWidth} />
           ) : (
-            <View className="flex-1 items-center justify-center px-8 py-12">
+            <View className="flex-1 items-center justify-center px-6 py-12">
               <Text accessibilityRole="header" className="text-title-3 font-semibold text-text">
                 No saved looks yet
               </Text>
@@ -122,23 +124,34 @@ export default function LookbookScreen() {
   );
 }
 
-/** Loading placeholder matching the grid geometry (no layout jump). */
+/**
+ * Loading placeholder matching the grid geometry (no layout jump). Rendered as
+ * the list's empty component, so the list's content container already supplies
+ * the gutter, top padding and max width — adding them here again squeezes the
+ * row below two tiles and collapses it to one column.
+ */
 function LookbookSkeleton({ columns, tileWidth }: { columns: number; tileWidth: number }) {
   return (
     <View
       accessibilityLabel="Loading your lookbook"
       accessibilityRole="progressbar"
-      className="w-full flex-row flex-wrap self-center"
-      style={{ gap: GRID_GAP, paddingHorizontal: GRID_GUTTER, paddingTop: 12, maxWidth: 1200 }}>
+      className="w-full flex-row flex-wrap"
+      style={{ gap: GRID_GAP }}>
       {Array.from({ length: columns * 2 }, (_, i) => (
         <View
           key={i}
           style={{ width: tileWidth }}
-          className="overflow-hidden rounded-xl bg-surface shadow-md">
-          <View className="w-full bg-border" style={{ aspectRatio: 3 / 4 }} />
-          <View className="gap-2 p-3">
-            <View className="h-3.5 w-2/3 rounded-md bg-border" />
-            <View className="h-3 w-1/3 rounded-md bg-border" />
+          className="rounded-xl bg-surface shadow-md">
+          <View className="w-full rounded-t-xl bg-border" style={{ aspectRatio: 3 / 4 }} />
+          {/* Same footer as the real card: bars sit in boxes the height of the
+              subhead / caption lines they stand in for, so nothing jumps. */}
+          <View className="gap-1 px-3 pb-3 pt-2">
+            <View className="h-5 justify-center">
+              <View className="h-3.5 w-2/3 rounded-md bg-border" />
+            </View>
+            <View className="h-4 justify-center">
+              <View className="h-3 w-1/3 rounded-md bg-border" />
+            </View>
           </View>
         </View>
       ))}

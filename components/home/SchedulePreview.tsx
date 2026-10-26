@@ -59,7 +59,8 @@ export function SchedulePreview() {
               accessibilityRole="button"
               accessibilityLabel="Allow calendar access"
               onPress={() => requestPermission()}
-              className="h-9 items-center justify-center rounded-full bg-primary px-4">
+              hitSlop={4}
+               className="h-9 items-center justify-center rounded-full bg-primary px-4 active:bg-primary-pressed">
               <Text className="text-footnote font-medium text-white">Enable</Text>
             </Pressable>
           )}
@@ -75,7 +76,8 @@ export function SchedulePreview() {
             accessibilityRole="button"
             accessibilityLabel="Retry loading events"
             onPress={() => refetch()}
-            className="rounded-full px-3 py-1.5">
+            hitSlop={4}
+             className="h-9 justify-center rounded-full px-3 active:bg-primary-tint">
             <Text className="text-footnote font-medium text-primary">
               Retry
             </Text>

@@ -1,8 +1,10 @@
 import { Link } from 'expo-router';
 import { Linking, Pressable, ScrollView, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AvatarPreview } from '@/components/avatar/AvatarPreview';
 import { WeatherWidget } from '@/components/home/WeatherWidget';
+import { useTabBarInset } from '@/components/navigation/FabTabBar';
 import { MoodSelector } from '@/components/home/MoodSelector';
 import { SchedulePreview } from '@/components/home/SchedulePreview';
 import { useDeviceLocation } from '@/hooks/useLocation';
@@ -26,76 +28,79 @@ export default function HomeScreen() {
   const usingGps = status === 'granted';
   const { plan } = usePlan();
   const usage = useGenerationUsage();
+  const tabBarInset = useTabBarInset();
 
   return (
-    <ScrollView
-      className="flex-1 bg-bg"
-      contentContainerClassName="px-6 pb-8 pt-12">
-      <View className="flex-row items-center justify-between">
-        <View className="flex-1">
-          <Text className="text-title-1 font-bold text-text">Today</Text>
+    <SafeAreaView edges={['top']} className="flex-1 bg-bg">
+      <ScrollView
+        contentContainerClassName="px-6 pt-4"
+        contentContainerStyle={{ paddingBottom: tabBarInset + 32 }}>
+        <View className="flex-row items-center justify-between">
+          <View className="flex-1">
+            <Text className="text-title-1 font-bold text-text">Today</Text>
+          </View>
+          <Link href="/onboarding/avatar-capture" asChild>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Your avatar"
+              accessibilityHint="Opens the avatar setup">
+              <AvatarPreview size={48} />
+            </Pressable>
+          </Link>
         </View>
-        <Link href="/onboarding/avatar-capture" asChild>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Your avatar"
-            accessibilityHint="Opens the avatar setup">
-            <AvatarPreview size={48} />
-          </Pressable>
-        </Link>
-      </View>
-      <Text className="mb-8 mt-1 text-footnote text-text-muted">
-        {usingGps
-          ? 'Weather for your current location.'
-          : saved
-            ? 'Weather for your saved location — tap the target icon for live GPS.'
-            : 'Default area — tap the target icon for live GPS.'}
-      </Text>
-      <WeatherWidget
-        coordinates={effective}
-        placeLabel={
-          usingGps
-            ? (placeLabel ?? 'GPS location')
+        <Text className="mb-8 mt-1 text-footnote text-text-muted">
+          {usingGps
+            ? 'Weather for your current location.'
             : saved
-              ? (profile?.location_name ?? 'Saved location')
-              : 'Default area'
-        }
-        locationAction={
-          status === 'loading'
-            ? null
-            : {
-                active: usingGps,
-                label: usingGps
-                  ? 'Location active'
-                  : blocked
-                    ? 'Open location settings'
-                    : 'Enable location',
-                onPress: () => (blocked ? Linking.openSettings() : retry()),
-              }
-        }
-      />
-      <View className="mt-8">
-        <MoodSelector />
-      </View>
-      <View className="mt-8">
-        <SchedulePreview />
-      </View>
-      <View className="mb-8 mt-8 gap-2">
-        <Link href="/outfit/new" asChild>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Generate today's outfits"
-            accessibilityHint={generationsLine(plan, usage)}
-            className="h-[52px] items-center justify-center rounded-full bg-primary px-6 shadow-md">
-            <Text className="text-headline text-white">
-              Generate today&apos;s outfits
-            </Text>
-          </Pressable>
-        </Link>
-        <Text testID="home-generation-usage" className="text-center text-caption text-text-muted">
-          {generationsLine(plan, usage)}
+              ? 'Weather for your saved location — tap the target icon for live GPS.'
+              : 'Default area — tap the target icon for live GPS.'}
         </Text>
-      </View>
-    </ScrollView>
+        <WeatherWidget
+          coordinates={effective}
+          placeLabel={
+            usingGps
+              ? (placeLabel ?? 'GPS location')
+              : saved
+                ? (profile?.location_name ?? 'Saved location')
+                : 'Default area'
+          }
+          locationAction={
+            status === 'loading'
+              ? null
+              : {
+                  active: usingGps,
+                  label: usingGps
+                    ? 'Location active'
+                    : blocked
+                      ? 'Open location settings'
+                      : 'Enable location',
+                  onPress: () => (blocked ? Linking.openSettings() : retry()),
+                }
+          }
+        />
+        <View className="mt-8">
+          <MoodSelector />
+        </View>
+        <View className="mt-8">
+          <SchedulePreview />
+        </View>
+        <View className="mb-8 mt-8 gap-2">
+          <Link href="/outfit/new" asChild>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Generate today's outfits"
+              accessibilityHint={generationsLine(plan, usage)}
+              className="h-[52px] items-center justify-center rounded-full bg-primary px-6 shadow-md active:bg-primary-pressed">
+              <Text className="text-headline text-white">
+                Generate today&apos;s outfits
+              </Text>
+            </Pressable>
+          </Link>
+          <Text testID="home-generation-usage" className="text-center text-caption text-text-muted">
+            {generationsLine(plan, usage)}
+          </Text>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }

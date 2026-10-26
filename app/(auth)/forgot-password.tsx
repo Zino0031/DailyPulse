@@ -14,14 +14,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { BackButton } from "@/components/ui/BackButton";
-import { useColorScheme } from "@/components/useColorScheme";
+import { useThemeTokens } from "@/hooks/useThemeTokens";
 import { useAuth } from "@/hooks/useAuth";
 
 const BRAND = "#5B47FB";
 
 export default function ForgotPasswordScreen() {
-  const scheme = useColorScheme();
-  const iconColor = scheme === "dark" ? "#6B7280" : "#9CA3AF";
+  const { textSubtle: iconColor } = useThemeTokens();
   const { resetPassword } = useAuth();
 
   const [email, setEmail] = useState("");
@@ -64,7 +63,7 @@ export default function ForgotPasswordScreen() {
             <MaterialCommunityIcons name="send" color={BRAND} size={80} />
           </View>
 
-          <View className="mt-10 gap-8">
+          <View className="mt-8 gap-8">
             <View>
               <Text className="text-title-1 font-bold text-text">
                 Forgot password
@@ -117,7 +116,7 @@ export default function ForgotPasswordScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Send reset link"
                 accessibilityState={{ disabled: !canSubmit, busy: submitting }}
-                className={`h-16 items-center justify-center rounded-full bg-primary active:opacity-80 ${
+                className={`h-[52px] items-center justify-center rounded-full bg-primary active:bg-primary-pressed ${
                   !canSubmit ? "opacity-60" : ""
                 }`}
               >
