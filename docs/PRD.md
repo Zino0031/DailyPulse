@@ -68,10 +68,10 @@
   - Resolution: Standard preview resolution.
 - **Plus Tier ($X/mo):**
   - Wardrobe Capacity: Up to 250 items.
-  - Daily AI Generations: 5 generations per day + "Regenerate" options.
+  - Daily AI Generations: 3 generations per day + "Regenerate" options.
   - Custom mood and style parameter tuning.
 - **Pro Tier ($Y/mo):**
-  - Unlimited wardrobe capacity & unlimited daily AI generations.
+  - Unlimited wardrobe capacity & 20 AI generations a day (3 options each).
   - High-res cinematic avatar renders.
   - Advanced calendar auto-sync and packing list generator.
 - **Paywall Management:** Integrated via **RevenueCat** SDK with Expo.

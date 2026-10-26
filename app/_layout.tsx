@@ -22,7 +22,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import { QueryClient, useIsRestoring } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { Paywall } from '@/components/subscription/Paywall';
@@ -91,6 +91,13 @@ const persister = createAsyncStoragePersister({
 
 export default function RootLayout() {
   const tokens = useThemeTokens();
+  const navTheme = useMemo(
+    () => ({
+      ...DefaultTheme,
+      colors: { ...DefaultTheme.colors, background: tokens.bg },
+    }),
+    [tokens.bg],
+  );
   const [fontsLoaded, fontError] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     Inter_400Regular,
@@ -118,11 +125,7 @@ export default function RootLayout() {
           },
         }}>
         {/* Page colour behind screens, so tab cross-fades don't flash grey. */}
-        <ThemeProvider
-          value={{
-            ...DefaultTheme,
-            colors: { ...DefaultTheme.colors, background: tokens.bg },
-          }}>
+        <ThemeProvider value={navTheme}>
           <BootGate fontsLoaded={fontsLoaded}>
             <Stack>
               <Stack.Screen
@@ -146,6 +149,7 @@ export default function RootLayout() {
                   title: '',
                   headerBackButtonDisplayMode: 'minimal',
                   headerShadowVisible: false,
+                  headerTintColor: tokens.text,
                   headerStyle: { backgroundColor: tokens.bg },
                 }}
               />
@@ -155,16 +159,29 @@ export default function RootLayout() {
                   presentation: 'modal',
                   title: 'Edit profile',
                   headerShadowVisible: false,
+                  headerTintColor: tokens.text,
                   headerStyle: { backgroundColor: tokens.bg },
                 }}
               />
               <Stack.Screen
                 name="item/new"
-                options={{ presentation: 'modal', title: 'New item' }}
+                options={{
+                  presentation: 'modal',
+                  title: 'New item',
+                  headerShadowVisible: false,
+                  headerTintColor: tokens.text,
+                  headerStyle: { backgroundColor: tokens.bg },
+                }}
               />
               <Stack.Screen
                 name="item/[id]"
-                options={{ presentation: 'modal', title: 'Edit item' }}
+                options={{
+                  presentation: 'modal',
+                  title: 'Edit item',
+                  headerShadowVisible: false,
+                  headerTintColor: tokens.text,
+                  headerStyle: { backgroundColor: tokens.bg },
+                }}
               />
             </Stack>
             {/* One app-wide paywall; screens open it via usePaywallStore. */}
@@ -175,13 +192,6 @@ export default function RootLayout() {
     </SafeAreaProvider>
   );
 }
-
-/**
- * Dev-only escape hatch for previewing protected screens before Epic 1
- * lands real auth. Set EXPO_PUBLIC_BYPASS_AUTH=true in your local .env
- * (never commit .env). Absent/false = normal gate behavior.
- */
-const DEV_BYPASS_AUTH = process.env.EXPO_PUBLIC_BYPASS_AUTH === 'true';
 
 /**
  * Holds the splash screen until boot finishes, then enforces the auth gate:

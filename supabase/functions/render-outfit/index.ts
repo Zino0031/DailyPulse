@@ -1,8 +1,12 @@
 // render-outfit — AI try-on imagery over Cloudflare Workers AI (issue #45).
-// POST { outfitId?: string, items?: WardrobeItem[], ctx: OutfitContext, seed?: number }
-//   -> { renderUrl, engine: 'cf-klein' | 'cf-flux', quality: 'standard' | 'hd', usage }
+// POST { outfitId?: string, items?: WardrobeItem[], ctx: OutfitContext, seed?: number,
+//        regenerate?: boolean }
+//   -> { renderUrl, engine?: 'cf-klein' | 'cf-flux', quality: 'standard' | 'hd', usage, cached? }
 //    | 429 { capped: true, code: 'preview_limit', usage }
 //    | 502 { error: 'render unavailable, try again', usage }
+// An `outfitId` with a persisted render returns that image for free (cached:
+// true, no engine) instead of spending another preview (issue #48 D1) unless
+// the caller sends `regenerate: true` (the explicit Regenerate preview tap).
 //
 // Cloudflare is the only engine — no cross-provider fallback. Engine order:
 // FLUX.2-klein-4b (garment references) → FLUX.1-schnell (text only).
@@ -22,7 +26,7 @@
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 
-import { planFor, RENDER_SIZE } from '../_shared/tiers.ts';
+import { planFor, RENDER_SIZE, usageDay } from '../_shared/tiers.ts';
 import { isOwnPath, isRemoteUrl } from '../_shared/wardrobeTags.ts';
 
 const corsHeaders = {
@@ -284,15 +288,16 @@ Deno.serve(async (req) => {
     if (!user) return json({ error: 'sign in required' }, 401);
 
     const admin = createClient(supabaseUrl, serviceKey);
-    const { outfitId, items: bodyItems, ctx, seed = 1 } = await req.json();
+    const { outfitId, items: bodyItems, ctx, seed = 1, regenerate = false } = await req.json();
     let items: RenderItem[] = Array.isArray(bodyItems)
       ? (bodyItems as RenderItem[]).map((i) => ({ ...i, image_url: ownRef(i.image_url, user.id) }))
       : [];
     let promptCtx: RenderCtx = ctx;
+    let cachedRender: string | null = null;
     if (typeof outfitId === 'string') {
       const { data: row, error } = await admin
         .from('outfits')
-        .select('item_ids,weather_summary,event_summary,mood')
+        .select('item_ids,weather_summary,event_summary,mood,rendered_image_url')
         .eq('id', outfitId)
         .eq('user_id', user.id)
         .maybeSingle();
@@ -309,6 +314,8 @@ Deno.serve(async (req) => {
       items = ids
         .map((id) => byId.get(id))
         .filter((i): i is CatalogRow => Boolean(i));
+      cachedRender =
+        typeof row.rendered_image_url === 'string' ? row.rendered_image_url : null;
       const weather = (row.weather_summary ?? {}) as { tempC?: number };
       promptCtx = {
         tempC: typeof weather.tempC === 'number' ? weather.tempC : 20,
@@ -320,10 +327,43 @@ Deno.serve(async (req) => {
       return json({ error: 'items and ctx (or outfitId) are required' }, 400);
     }
 
+    const { data: profile } = await admin
+      .from('users')
+      .select('tier')
+      .eq('id', user.id)
+      .maybeSingle();
+    const plan = planFor(profile?.tier);
+    const quality = plan.renderQuality;
+
+    // D1: an outfit that already has a render reuses it for free. Only a
+    // fresh render spends preview budget, so switching options (or reopening
+    // a saved look) can never double-charge. An explicit regenerate asks for
+    // a new image and must render (and spend) as before.
+    if (cachedRender && !regenerate) {
+      let cachedUrl: string | null = isRemoteUrl(cachedRender) ? cachedRender : null;
+      if (!cachedUrl) {
+        const { data: signed } = await admin.storage
+          .from('outfits')
+          .createSignedUrl(cachedRender, 7 * 24 * 3600);
+        cachedUrl = signed?.signedUrl ?? null;
+      }
+      if (cachedUrl) {
+        const { data: usageRow } = await admin
+          .from('preview_usage')
+          .select('used')
+          .eq('user_id', user.id)
+          .eq('day', usageDay())
+          .maybeSingle();
+        return json({
+          renderUrl: cachedUrl,
+          quality,
+          usage: { used: usageRow?.used ?? 0, limit: plan.dailyPreviews },
+          cached: true,
+        });
+      }
+    }
+
     // Preview budget: one spend per fresh render, refunded on failure.
-    // There's no cached-URL path through this endpoint — every call renders
-    // again and is billable; the client only caches the URL per board for the
-    // current session.
     const { data: preview, error: previewError } = await admin
       .rpc('consume_preview', { p_user: user.id })
       .single<{ allowed: boolean; used: number; daily_limit: number | null; tier: string }>();
@@ -343,13 +383,6 @@ Deno.serve(async (req) => {
       await admin.rpc('refund_preview', { p_user: user.id });
     };
     previewSpent = true;
-
-    const { data: profile } = await admin
-      .from('users')
-      .select('tier')
-      .eq('id', user.id)
-      .maybeSingle();
-    const quality = planFor(profile?.tier).renderQuality;
 
     const prompt = buildPrompt(items, promptCtx);
     // Cloudflare only: klein multi-reference → schnell text. Whichever

@@ -45,8 +45,9 @@ async function fetchTodayEvents(): Promise<TaggedEvent[]> {
 export function useCalendarEvents() {
   // SDK 57's calendar API is stubbed inside Expo Go (every method throws),
   // so no permission or event state can ever resolve there — don't even ask.
+  // `appOwnership` is deprecated; `storeClient` is Expo Go's execution env.
   const unsupported =
-    Constants.appOwnership === 'expo' && Platform.OS !== 'web';
+    Constants.executionEnvironment === 'storeClient' && Platform.OS !== 'web';
   const [permission, requestPermission] = Calendar.useCalendarPermissions({
     get: !unsupported,
   });

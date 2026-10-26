@@ -12,7 +12,7 @@ import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
 import { resolveRenderUrls } from '@/services/renders';
 import { useAuthStore } from '@/store/useAuthStore';
 import { showPaywall } from '@/store/usePaywallStore';
-import { LIMIT_ERRORS, usageDay } from '@/supabase/functions/_shared/tiers';
+import { LIMIT_ERRORS, PLANS, usageDay } from '@/supabase/functions/_shared/tiers';
 import type { WardrobeItemRow } from '@/types/database';
 import { aiGenerationEnabled } from '@/utils/ai';
 import { lookbookKeys, savedOutfitKeys } from '@/utils/queryKeys';
@@ -30,6 +30,11 @@ export const GENERATION_STAGES = [
 ] as const;
 
 const MIN_STAGE_MS = 450;
+
+/** The largest option count any plan allows; the server clamps to the tier. */
+const MAX_OUTFIT_OPTIONS = Math.max(
+  ...Object.values(PLANS).map((entry) => entry.outfitOptions),
+);
 
 /**
  * Cache key for the last generated look. Persisted (utils/queryCache.ts) so a
@@ -516,6 +521,10 @@ export function useOutfit() {
     setStillPending(false);
     setBoardsPending(true);
     const maxBoards = plan.outfitOptions;
+    // The server clamps to the real tier, so ask for the catalog maximum;
+    // a cold profile cache can no longer cut a Pro user down to one option
+    // (issue #48 D2).
+    const remoteCount = MAX_OUTFIT_OPTIONS;
     (async () => {
       try {
         if (!aiEnabled) {
@@ -553,7 +562,7 @@ export function useOutfit() {
               items,
               excludeTopIds,
               regenerate,
-              maxBoards,
+              remoteCount,
               requestId,
             );
             break;
@@ -574,8 +583,14 @@ export function useOutfit() {
           settledRef.current = requestId;
           setResuming(false);
           setAiUnavailable(false);
-          seenTops.current = [...seenTops.current, remote.boards[0].top.id].slice(-6);
-          const next = remote.boards.slice(0, maxBoards);
+          // Exclude every top from the previous generation, not just the
+          // first option's (issue #48 D3).
+          seenTops.current = [
+            ...seenTops.current,
+            ...remote.boards.map((board) => board.top.id),
+          ].slice(-12);
+          // The server already applied the tier cap — never clamp below it.
+          const next = remote.boards;
           setBoards(next);
           rememberOutfit(next);
           setUsed(remote.used);
@@ -663,10 +678,11 @@ export function useOutfit() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, retryToken, wardrobeLoading, items.length, usage.isLoading, showRestored, restored]);
 
-  // Paywall triggers on cap (issue #17) — once per refusal.
+  // Paywall triggers on cap (issue #17) — once per refusal. Pro has nothing
+  // above it, so a top-tier cap must never open the paywall (issue #48 D4).
   useEffect(() => {
-    if (blocked) showPaywall(blocked);
-  }, [blocked]);
+    if (blocked && plan.id !== 'pro') showPaywall(blocked);
+  }, [blocked, plan.id]);
 
   const generating =
     !showRestored &&
@@ -764,6 +780,9 @@ export function useOutfit() {
 
   function regenerate() {
     if (regenerateLock) {
+      // Pro at its daily cap: no upsell exists, so stay put and let the
+      // usage line state when it resets (issue #48 D4).
+      if (regenerateLock === 'limit' && plan.id === 'pro') return;
       showPaywall(regenerateLock === 'plan' ? 'regenerate' : 'daily_limit');
       return;
     }

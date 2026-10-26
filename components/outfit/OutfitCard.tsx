@@ -74,6 +74,11 @@ export function OutfitCard({
   const render = useAiRender(board, ctx, onPreviewPersisted);
   const { plan, tier } = usePlan();
   const previews = usePreviewUsage();
+  // The render response carries the fresh count, so the meter updates even
+  // before the preview-usage query refetches (issue #48 D5).
+  const shownPreviews = render.previewUsage
+    ? allowanceOf(render.previewUsage.limit, render.previewUsage.used)
+    : previews;
   // A next plan exists only for Free → Plus and Plus → Pro. Pro has nothing
   // to buy, so it must never be shown an upgrade CTA (issue #46).
   const canUpgrade = paywallCopy('preview', tier).highlight !== null;
@@ -249,12 +254,19 @@ export function OutfitCard({
               accessibilityRole="button"
               accessibilityLabel="Regenerate AI preview"
               accessibilityHint="Renders a new preview and replaces the saved image"
-              onPress={() => render.generate()}
+              onPress={() => render.generate({ force: true })}
               className="mt-2 h-11 justify-center self-start rounded-full px-3 active:bg-primary-tint">
               <Text className="text-callout font-medium text-primary">
                 Regenerate preview
               </Text>
             </Pressable>
+          )}
+          {!previews.isLoading && (
+            <Text
+              testID="outfit-preview-usage"
+              className="mt-1 text-caption text-text-subtle">
+              {previewsLine(plan, shownPreviews)} Previews are a separate budget from outfits.
+            </Text>
           )}
         </View>
       )}

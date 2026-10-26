@@ -133,10 +133,12 @@ export default function ForgotPasswordScreen() {
                 <Text className="text-footnote text-text-muted">
                   Remember your password?
                 </Text>
-                <Link href="/sign-in">
-                  <Text className="text-footnote font-semibold text-primary">
-                    Sign in
-                  </Text>
+                <Link href="/sign-in" asChild>
+                  <Pressable hitSlop={8} className="min-h-11 justify-center">
+                    <Text className="text-footnote font-semibold text-primary">
+                      Sign in
+                    </Text>
+                  </Pressable>
                 </Link>
               </View>
             </View>

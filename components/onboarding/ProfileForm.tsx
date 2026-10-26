@@ -69,10 +69,32 @@ export function ProfileFormScreen({ editing }: { editing: boolean }) {
   const resume = editing ? undefined : draft;
 
   // Wait for both sources so the form initialises once with the right values.
-  if (!hydrated || (profile.isLoading && !resume)) {
+  // Drafts are irrelevant when editing, so a slow draft store must not block
+  // the modal (issue #54 review).
+  if ((!editing && !hydrated) || (profile.isLoading && !resume)) {
     return (
       <View className="flex-1 items-center justify-center bg-bg">
         <ActivityIndicator color={BRAND.primary} />
+      </View>
+    );
+  }
+
+  // A deep link can reach the modal before the profile resolves, or after the
+  // query failed; an empty form would silently overwrite the saved profile.
+  if (editing && !profile.data) {
+    return (
+      <View className="flex-1 items-center justify-center gap-4 bg-bg px-6">
+        <StatusNote
+          tone="error"
+          testID="profile-form-load-error"
+          message="Couldn't load your profile."
+        />
+        <Button
+          testID="profile-form-load-retry"
+          label="Try again"
+          variant="secondary"
+          onPress={() => profile.refetch()}
+        />
       </View>
     );
   }
@@ -145,33 +167,37 @@ function ProfileForm({
       <Stack.Screen
         options={{
           title: editing ? 'Edit profile' : 'Your profile',
-          headerLeft: editing
-            ? () => (
-                <Pressable
-                  testID="profile-form-cancel"
-                  onPress={() => router.back()}
-                  hitSlop={8}
-                  accessibilityRole="button"
-                  accessibilityHint="Closes without saving"
-                  className="h-11 justify-center px-3">
-                  <Text className="text-callout text-primary">Cancel</Text>
-                </Pressable>
-              )
-            : undefined,
-          headerRight:
-            editing || alreadyOnboarded
-              ? undefined
-              : () => (
+          ...(editing
+            ? {
+                headerLeft: () => (
+                  <Pressable
+                    testID="profile-form-cancel"
+                    onPress={() => router.back()}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityHint="Closes the form"
+                    className="h-11 justify-center px-3">
+                    <Text className="text-callout text-primary">Cancel</Text>
+                  </Pressable>
+                ),
+              }
+            : {}),
+          ...(editing || alreadyOnboarded
+            ? {}
+            : {
+                headerRight: () => (
                   <Pressable
                     testID="profile-form-skip"
                     onPress={onSkip}
                     disabled={busy}
                     hitSlop={8}
                     accessibilityRole="button"
-                    accessibilityHint="Saves your answers on this device so you can finish later">
+                    accessibilityHint="Saves your answers on this device so you can finish later"
+                    className="h-11 justify-center px-3">
                     <Text className="text-callout font-semibold text-primary">Skip</Text>
                   </Pressable>
                 ),
+              }),
         }}
       />
       <KeyboardAvoidingView
@@ -305,7 +331,10 @@ function AvatarField() {
   };
 
   return (
-    <Field label="Photo" hint="Also the face your outfit previews wear." error={undefined}>
+    <Field
+      label="Photo"
+      hint="Also the face your outfit previews wear. A new photo is saved as soon as you pick it."
+      error={undefined}>
       <View className="flex-row items-center gap-4">
         {pending ? (
           // Local file as the preview while it uploads.

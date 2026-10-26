@@ -156,7 +156,7 @@ What enforces what:
 |---|---|---|---|---|
 | Closet items | 50 | 250 | unlimited | `enforce_closet_limit` trigger (insert fails with `closet_full`) |
 | AI outfits / day (UTC) | 1 | 3 | 20 | `consume_generation()` in `generate-outfit`, `consume_my_generation()` for on-device |
-| Outfit options / generation | 1 | 3 | 5 | `generate-outfit` clamps `count` to the plan |
+| Outfit options / generation | 1 | 3 | 3 | `generate-outfit` clamps `count` to the plan |
 | AI previews / day (UTC) | 1 | 5 | 20 | `consume_preview()` in `render-outfit` (429 `preview_limit`) |
 | Regenerate | locked (paywall) | ✓ | ✓ | `generate-outfit` + app gate (403 `regenerate_locked`) |
 | Preview quality | standard | standard | HD | `render-outfit` reads the tier |

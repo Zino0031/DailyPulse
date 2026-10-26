@@ -212,7 +212,8 @@ export default function SignUpScreen() {
                   accessibilityLabel={
                     showPassword ? "Hide password" : "Show password"
                   }
-                  hitSlop={8}
+                  hitSlop={12}
+                  className="h-11 w-11 items-center justify-center"
                 >
                   <MaterialCommunityIcons
                     name={showPassword ? "eye-outline" : "eye-off-outline"}
@@ -227,7 +228,7 @@ export default function SignUpScreen() {
                 accessibilityRole="checkbox"
                 accessibilityLabel="I agree with the Terms of Service and Privacy policy"
                 accessibilityState={{ checked: agreed }}
-                className="flex-row items-start gap-3 py-1"
+                className="min-h-11 flex-row items-start gap-3 py-2"
               >
                 <View
                   className={`mt-0.5 h-5 w-5 items-center justify-center rounded-sm border ${
@@ -291,10 +292,12 @@ export default function SignUpScreen() {
                 <Text className="text-footnote text-text-muted">
                   Already have an account?
                 </Text>
-                <Link href="/sign-in">
-                  <Text className="text-footnote font-semibold text-primary">
-                    Sign in
-                  </Text>
+                <Link href="/sign-in" asChild>
+                  <Pressable hitSlop={8} className="min-h-11 justify-center">
+                    <Text className="text-footnote font-semibold text-primary">
+                      Sign in
+                    </Text>
+                  </Pressable>
                 </Link>
               </View>
             </View>

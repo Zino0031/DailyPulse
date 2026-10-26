@@ -62,6 +62,14 @@ it('stays closed until a screen asks for it', async () => {
   expect(api.loadPlanOffers).not.toHaveBeenCalled();
 });
 
+it('has an explicit close button in the top-right', async () => {
+  await renderPaywall();
+  await act(async () => showPaywall('upgrade'));
+
+  await fireEvent.press(screen.getByTestId('paywall-dismiss'));
+  expect(usePaywallStore.getState().reason).toBeNull();
+});
+
 it('explains the trigger and lists Free (current) plus both upgrades with store prices', async () => {
   await renderPaywall('free');
   await act(async () => showPaywall('regenerate'));

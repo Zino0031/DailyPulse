@@ -131,7 +131,7 @@ export default function ClosetScreen() {
           body="Your wardrobe is saved to your account so it follows you across devices."
         />
       ) : isPending ? (
-        <ClosetGridSkeleton />
+        <ClosetGridSkeleton bottomInset={tabBarInset} />
       ) : isError && !data ? (
         <EmptyState
           title="Couldn't load your closet"

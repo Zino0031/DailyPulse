@@ -12,6 +12,7 @@
  */
 
 :root {
+  color-scheme: light;
   --color-bg: 245 247 250;              /* #F5F7FA */
   --color-surface: 255 255 255;         /* #FFFFFF */
   --color-surface-elevated: 255 255 255;/* #FFFFFF */

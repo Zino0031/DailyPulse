@@ -90,7 +90,7 @@ export function useAiRender(
   onPersistedRef.current = onPersisted;
   // Renders produced this session, keyed by board. Switching options resets
   // the hook, so without this switching back would drop the image (and a
-  // re-tap would spend another preview) — issue #50 note.
+  // re-tap would spend another preview) — issue #50 note / #48 D1.
   const sessionRef = useRef(
     new Map<string, { url: string; quality: RenderQuality; rowId: string | null }>(),
   );
@@ -111,9 +111,13 @@ export function useAiRender(
   // A spent preview that fails to load retries the same URL once before we
   // stop — never by calling the (billable) function again (issue #46).
   const retriedImage = useRef(false);
+  // Keep an explicit regenerate across the failure-retry tap.
+  const forced = useRef(false);
 
   // Switching boards shows that board's saved render immediately (or the
-  // empty state) — a fresh tap still re-renders and overwrites it.
+  // empty state) — a fresh tap still re-renders and overwrites it. If the
+  // board has an outfitId, prefer the cached/rendered image for that board.key
+  // to avoid re-spending previews (issue #48 D1).
   useEffect(() => {
     const key = board?.key;
     const cached = key ? sessionRef.current.get(key) : undefined;
@@ -132,8 +136,9 @@ export function useAiRender(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board?.key]);
 
-  const generate = useCallback(async () => {
+  const generate = useCallback(async (options?: { force?: boolean }) => {
     if (!board || working) return;
+    forced.current = options?.force === true;
     setStarted(true);
     setWorking(true);
     setLoaded(false);
@@ -182,9 +187,17 @@ export function useAiRender(
             usage?: { used: number; limit: number | null };
           }>('render-outfit', {
             body: {
-              // Persist when we have (or just created) a row; only fall back
-              // to the raw items when the draft couldn't be written.
-              ...(targetId ? { outfitId: targetId } : {}),
+              // Persist when we have (or just created) a row; always send
+              // outfitId when available so the server can reuse cached renders
+              // and avoid double-spending previews (issue #48 D1).
+              ...(targetId
+                ? { outfitId: targetId }
+                : board.outfitId
+                  ? { outfitId: board.outfitId }
+                  : {}),
+              // An explicit "Regenerate preview" must render a new image even
+              // though this outfit already has one stored.
+              ...(options?.force ? { regenerate: true } : {}),
               items: pieces.map((i) => ({
                 image_url: i.image_url,
                 category: i.category,
@@ -258,7 +271,7 @@ export function useAiRender(
   }, [board, ctx, working, rowId, queryClient]);
 
   const retry = useCallback(() => {
-    void generate();
+    void generate({ force: forced.current });
   }, [generate]);
 
   const onError = useCallback(() => {
