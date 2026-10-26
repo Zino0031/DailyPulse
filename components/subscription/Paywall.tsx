@@ -1,6 +1,6 @@
-import { Check } from 'lucide-react-native';
+import { Check, X } from 'lucide-react-native';
 import { useState } from 'react';
-import { Linking, Modal, Platform, ScrollView, Text, View } from 'react-native';
+import { Linking, Modal, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { StatusNote } from '@/components/closet/StatusNote';
@@ -78,14 +78,26 @@ export function Paywall() {
       visible={reason !== null}
       animationType="slide"
       presentationStyle="pageSheet"
-      backdropColor={tokens.bg}
-      onRequestClose={hide}>
+      allowSwipeDismissal
+      onRequestClose={hide}
+      onDismiss={hide}>
       <ScrollView
         testID="paywall"
         className="flex-1 bg-bg"
         contentContainerClassName="w-full max-w-xl self-center px-6 pt-2"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
         keyboardShouldPersistTaps="handled">
+        <View className="flex-row justify-end">
+          <Pressable
+            testID="paywall-dismiss"
+            onPress={hide}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            hitSlop={8}
+            className="h-11 w-11 items-center justify-center">
+            <X size={22} strokeWidth={1.75} color={tokens.textMuted} />
+          </Pressable>
+        </View>
         {/* Grabber (DESIGN.md §7 Sheet): hints the sheet can be dragged down. */}
         <View className="mb-4 h-1 w-9 self-center rounded-full bg-border" />
         <Text accessibilityRole="header" className="text-title-3 font-semibold text-text">

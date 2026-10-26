@@ -74,7 +74,7 @@ export function ClosetGrid({
 }
 
 /** Loading placeholder matching the real grid's geometry (no layout jump). */
-export function ClosetGridSkeleton() {
+export function ClosetGridSkeleton({ bottomInset = 0 }: { bottomInset?: number }) {
   const { width } = useWindowDimensions();
   const { columns, tileWidth } = gridMetrics(width);
   return (
@@ -82,7 +82,13 @@ export function ClosetGridSkeleton() {
       accessibilityLabel="Loading your closet"
       accessibilityRole="progressbar"
       className="w-full flex-row flex-wrap self-center"
-      style={{ gap: GAP, paddingHorizontal: GUTTER, paddingTop: 12, maxWidth: MAX_CONTENT }}>
+      style={{
+        gap: GAP,
+        paddingHorizontal: GUTTER,
+        paddingTop: 12,
+        paddingBottom: bottomInset + 32,
+        maxWidth: MAX_CONTENT,
+      }}>
       {Array.from({ length: columns * 2 }, (_, i) => (
         <View key={i} style={{ width: tileWidth }} className="rounded-xl bg-surface shadow-md">
           <View className="w-full rounded-t-xl bg-border" style={{ aspectRatio: 3 / 4 }} />

@@ -6,6 +6,7 @@ import { Pressable, StyleSheet, Text, View, type LayoutRectangle } from 'react-n
 import Animated, {
   Easing,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withSequence,
   withSpring,
@@ -23,6 +24,10 @@ const FAB_LIFT = 24;
 // Concave notch under the FAB: half-width at the bar edge, and depth.
 const NOTCH_HALF = 46;
 const NOTCH_DEPTH = 40;
+// The tab row's horizontal padding. Flex children are measured from the
+// content edge, but an absolutely-positioned `left: 0` starts at the border
+// edge — before this padding — so the dot's x needs it subtracted.
+const ROW_PADDING = 8;
 
 const SPRING = { damping: 15 };
 
@@ -75,7 +80,13 @@ export function FabTabBar({ state, descriptors, navigation, insets }: BottomTabB
     return (
       <TabItem
         key={route.key}
-        label={typeof options.title === 'string' ? options.title : route.name}
+        label={
+          typeof options.tabBarLabel === 'string'
+            ? options.tabBarLabel
+            : typeof options.title === 'string'
+              ? options.title
+              : route.name
+        }
         accessibilityLabel={options.tabBarAccessibilityLabel}
         focused={focused}
         icon={options.tabBarIcon?.({
@@ -119,12 +130,14 @@ export function FabTabBar({ state, descriptors, navigation, insets }: BottomTabB
         style={{ position: 'absolute', top: BAR_HEIGHT, left: 0, right: 0, bottom: 0 }}
         className="bg-surface"
       />
-      <View style={{ height: BAR_HEIGHT }} className="flex-row items-center px-2">
+      <View
+        style={{ height: BAR_HEIGHT, paddingHorizontal: ROW_PADDING }}
+        className="flex-row items-center">
         {tabs.slice(0, half)}
         <View style={{ width: NOTCH_HALF * 2 }} />
         {tabs.slice(half)}
         {active && slotY !== null && (
-          <SlidingDot x={active.x + active.width / 2} y={active.y + slotY} />
+          <SlidingDot x={active.x + active.width / 2 - ROW_PADDING} y={active.y + slotY} />
         )}
       </View>
       <GenerateFab />
@@ -155,14 +168,16 @@ const styles = StyleSheet.create({
  * mid-travel, so it reads as one dot following the selection.
  */
 function SlidingDot({ x, y }: { x: number; y: number }) {
+  const reducedMotion = useReducedMotion();
   const translateX = useSharedValue(x - DOT / 2);
   const stretch = useSharedValue(1);
   const placed = useRef(false);
   useEffect(() => {
     const target = x - DOT / 2;
-    if (!placed.current) {
+    if (!placed.current || reducedMotion) {
       placed.current = true;
       translateX.set(target);
+      stretch.set(1);
       return;
     }
     translateX.set(withTiming(target, { duration: DOT_TRAVEL_MS, easing: DOT_EASING }));
@@ -172,7 +187,7 @@ function SlidingDot({ x, y }: { x: number; y: number }) {
         withTiming(1, { duration: DOT_TRAVEL_MS / 2, easing: DOT_EASING }),
       ),
     );
-  }, [x, translateX, stretch]);
+  }, [x, translateX, stretch, reducedMotion]);
   const style = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }, { scaleX: stretch.value }],
   }));
@@ -202,14 +217,21 @@ function TabItem({
   const lift = useSharedValue(focused ? 1 : 0);
   const pop = useSharedValue(1);
   const mounted = useRef(false);
+  const reducedMotion = useReducedMotion();
   useEffect(() => {
+    if (reducedMotion) {
+      lift.set(focused ? 1 : 0);
+      pop.set(1);
+      mounted.current = true;
+      return;
+    }
     lift.set(withSpring(focused ? 1 : 0, SPRING));
     // Pop only on a real switch, not when the bar first mounts.
     if (focused && mounted.current) {
       pop.set(withSequence(withTiming(1.15, { duration: 120 }), withSpring(1, SPRING)));
     }
     mounted.current = true;
-  }, [focused, lift, pop]);
+  }, [focused, lift, pop, reducedMotion]);
   const iconStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: -2 * lift.value }, { scale: pop.value }],
   }));
@@ -240,6 +262,7 @@ function TabItem({
 
 function GenerateFab() {
   const router = useRouter();
+  const reducedMotion = useReducedMotion();
   const scale = useSharedValue(1);
   const scaleStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
 
@@ -251,10 +274,10 @@ function GenerateFab() {
         <Pressable
           onPress={() => router.push('/outfit/new')}
           onPressIn={() => {
-            scale.set(withSpring(0.96, SPRING));
+            if (!reducedMotion) scale.set(withSpring(0.96, SPRING));
           }}
           onPressOut={() => {
-            scale.set(withSpring(1, SPRING));
+            if (!reducedMotion) scale.set(withSpring(1, SPRING));
           }}
           accessibilityRole="button"
           accessibilityLabel="Generate today's outfit"

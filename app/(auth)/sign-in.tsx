@@ -171,7 +171,8 @@ export default function SignInScreen() {
                   accessibilityLabel={
                     showPassword ? "Hide password" : "Show password"
                   }
-                  hitSlop={8}
+                  hitSlop={12}
+                  className="h-11 w-11 items-center justify-center"
                 >
                   <MaterialCommunityIcons
                     name={showPassword ? "eye-outline" : "eye-off-outline"}
@@ -182,10 +183,12 @@ export default function SignInScreen() {
               </View>
 
               <View className="flex-row justify-end">
-                <Link href="/forgot-password">
-                  <Text className="text-footnote font-semibold text-primary">
-                    Forgot password?
-                  </Text>
+                <Link href="/forgot-password" asChild>
+                  <Pressable hitSlop={8} className="min-h-11 justify-center">
+                    <Text className="text-footnote font-semibold text-primary">
+                      Forgot password?
+                    </Text>
+                  </Pressable>
                 </Link>
               </View>
 
@@ -221,10 +224,12 @@ export default function SignInScreen() {
                 <Text className="text-footnote text-text-muted">
                   Don&apos;t have an account?
                 </Text>
-                <Link href="/sign-up">
-                  <Text className="text-footnote font-semibold text-primary">
-                    Sign up
-                  </Text>
+                <Link href="/sign-up" asChild>
+                  <Pressable hitSlop={8} className="min-h-11 justify-center">
+                    <Text className="text-footnote font-semibold text-primary">
+                      Sign up
+                    </Text>
+                  </Pressable>
                 </Link>
               </View>
             </View>

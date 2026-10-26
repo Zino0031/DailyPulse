@@ -144,6 +144,34 @@ it('shows a persisted render immediately, no Preview tap', async () => {
   expect(mockInvoke).not.toHaveBeenCalled();
 });
 
+it('shows remaining previews as a separate budget from outfits', async () => {
+  mockState.preview = {
+    used: 1,
+    limit: 5,
+    remaining: 4,
+    atLimit: false,
+    nearLimit: false,
+    isLoading: false,
+  };
+  await renderCard({ renderUrl: 'https://signed/render.png' });
+
+  expect(screen.getByText(/4 of 5 AI previews left today/)).toBeTruthy();
+  expect(screen.getByText(/separate budget from outfits/)).toBeTruthy();
+});
+
+it('forces a new image when Regenerate preview is tapped', async () => {
+  mockInvoke.mockResolvedValue({
+    data: { renderUrl: 'https://cdn/render-2.png', quality: 'standard' },
+    error: null,
+  });
+  await renderCard({ renderUrl: 'https://signed/render.png' });
+
+  await fireEvent.press(screen.getByTestId('outfit-preview-regenerate'));
+
+  await waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(1));
+  expect(mockInvoke.mock.calls[0][1].body.regenerate).toBe(true);
+});
+
 it('creates a draft row for an on-device preview and reports it to the screen', async () => {
   const onPersisted = jest.fn();
   mockInvoke.mockResolvedValue({

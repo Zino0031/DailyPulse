@@ -184,6 +184,14 @@ it('does not call the stylist when today is already used, and opens the paywall'
   expect(screen.queryByText('On-device')).toBeNull();
 });
 
+it('never offers an upgrade to a Pro user at the daily cap', async () => {
+  await renderScreen({ tier: 'pro', used: 20 });
+  expect(await screen.findByTestId('outfit-capped', {}, WAIT)).toBeTruthy();
+  expect(usePaywallStore.getState().reason).toBeNull();
+  expect(screen.queryByText('See plans')).toBeNull();
+  expect(screen.getByText(/More unlock (today|tomorrow) at /)).toBeTruthy();
+});
+
 it('honours a server-side cap (429) instead of falling back to the local composer', async () => {
   mockInvoke.mockResolvedValue(httpError(429, { capped: true, code: 'daily_limit', usage: { used: 1 } }));
   await renderScreen({ tier: 'free', used: 0 });
@@ -203,6 +211,44 @@ it('lets Plus regenerate and tells the server it is a regenerate', async () => {
   await waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(2));
   expect(mockInvoke.mock.calls[1][1].body.regenerate).toBe(true);
   expect(usePaywallStore.getState().reason).toBeNull();
+});
+
+it('requests the catalog maximum and renders every option the server returns', async () => {
+  // Issue #48 D2: a cold plan cache must not clamp a Pro response to 1.
+  mockInvoke.mockResolvedValue(aiPick(1, 3));
+  await renderScreen({ tier: 'pro', used: 0 });
+
+  expect(await screen.findByText('AI styled', {}, WAIT)).toBeTruthy();
+  expect(mockInvoke.mock.calls[0][1].body.count).toBe(3);
+  expect(screen.getByText('Option 3')).toBeTruthy();
+});
+
+it('excludes every top from the previous generation when regenerating', async () => {
+  // Issue #48 D3: the server must not bring back a top already on screen.
+  mockItems.push(item('t2', 'top'), item('t3', 'top'));
+  mockInvoke.mockResolvedValue({
+    data: {
+      outfits: [
+        { outfitId: 'o1', itemIds: ['t1', 'b1', 's1'], reasoning: [] },
+        { outfitId: 'o2', itemIds: ['t2', 'b1', 's1'], reasoning: [] },
+        { outfitId: 'o3', itemIds: ['t3', 'b1', 's1'], reasoning: [] },
+      ],
+      usage: { used: 1, limit: null },
+    },
+    error: null,
+  });
+  try {
+    await renderScreen({ tier: 'plus', used: 0 });
+    await screen.findByText('AI styled', {}, WAIT);
+
+    await fireEvent.press(screen.getByTestId('outfit-regenerate'));
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(2));
+    expect(mockInvoke.mock.calls[1][1].body.excludeTopIds).toEqual(
+      expect.arrayContaining(['t1', 't2', 't3']),
+    );
+  } finally {
+    mockItems.splice(3);
+  }
 });
 
 it('falls back to the on-device composer when the function is unreachable', async () => {

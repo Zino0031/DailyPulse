@@ -167,11 +167,15 @@ function GenerateFlow() {
           <Text className="mb-4 mt-1 text-footnote text-text-muted">
             {generationsLine(plan, usage)} Saved looks stay in your history.
           </Text>
-          <Button
-            label="See plans"
-            onPress={() => showPaywall('daily_limit')}
-            accessibilityHint="Compares plans with more AI outfits a day"
-          />
+          {/* Pro has nothing above it: show the reset time already in the
+              copy and never an upgrade pitch (issue #48 D4). */}
+          {plan.id !== 'pro' && (
+            <Button
+              label="See plans"
+              onPress={() => showPaywall('daily_limit')}
+              accessibilityHint="Compares plans with more AI outfits a day"
+            />
+          )}
         </View>
       )}
 
@@ -282,7 +286,9 @@ function GenerateFlow() {
                 regenerateLock === 'plan'
                   ? 'Regenerate needs Plus or Pro — shows the plans'
                   : regenerateLock === 'limit'
-                    ? "No AI outfits left today — shows the plans"
+                    ? plan.id === 'pro'
+                      ? 'No AI outfits left today'
+                      : 'No AI outfits left today — shows the plans'
                     : 'Styles a fresh set of options'
               }
               onPress={() => {

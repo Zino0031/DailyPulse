@@ -44,6 +44,3 @@ supabase/.temp/
 # generated native folders
 /ios
 /android
-
-
-.playwright-mcp

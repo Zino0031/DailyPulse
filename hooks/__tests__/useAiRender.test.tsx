@@ -113,6 +113,20 @@ it('renders the server image on a successful preview', async () => {
   expect(result.current.previewUsage).toEqual({ used: 1, limit: 1 });
 });
 
+it('asks for a fresh image when the user explicitly regenerates a preview', async () => {
+  mockInvoke.mockResolvedValue({
+    data: { renderUrl: 'https://cdn/render-2.png', quality: 'standard' },
+    error: null,
+  });
+  const { result } = await renderAi();
+
+  await act(async () => {
+    await result.current.generate({ force: true });
+  });
+
+  expect(mockInvoke.mock.calls[0][1].body.regenerate).toBe(true);
+});
+
 it('persists against the existing row and never creates a draft for an AI board', async () => {
   mockInvoke.mockResolvedValue({
     data: { renderUrl: 'https://cdn/render.png', quality: 'standard' },
