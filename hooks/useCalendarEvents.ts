@@ -43,12 +43,14 @@ async function fetchTodayEvents(): Promise<TaggedEvent[]> {
  * (web/Expo Go stubs) surface as states the screen renders.
  */
 export function useCalendarEvents() {
-  const [permission, requestPermission] = Calendar.useCalendarPermissions();
-  const granted = permission?.granted ?? false;
   // SDK 57's calendar API is stubbed inside Expo Go (every method throws),
-  // so no permission or event state can ever resolve there.
+  // so no permission or event state can ever resolve there — don't even ask.
   const unsupported =
     Constants.appOwnership === 'expo' && Platform.OS !== 'web';
+  const [permission, requestPermission] = Calendar.useCalendarPermissions({
+    get: !unsupported,
+  });
+  const granted = permission?.granted ?? false;
 
   const eventsQuery = useQuery({
     queryKey: ['calendar-events-today'],

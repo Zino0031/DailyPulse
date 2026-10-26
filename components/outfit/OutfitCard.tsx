@@ -250,7 +250,7 @@ export function OutfitCard({
               accessibilityLabel="Regenerate AI preview"
               accessibilityHint="Renders a new preview and replaces the saved image"
               onPress={() => render.generate()}
-              className="mt-2 self-start rounded-full px-3 py-1.5">
+              className="mt-2 h-11 justify-center self-start rounded-full px-3 active:bg-primary-tint">
               <Text className="text-callout font-medium text-primary">
                 Regenerate preview
               </Text>

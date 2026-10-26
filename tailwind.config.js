@@ -8,11 +8,10 @@ module.exports = {
     './store/**/*.{js,jsx,ts,tsx}',
   ],
   presets: [require('nativewind/preset')],
-  darkMode: 'media',
   theme: {
     extend: {
       colors: {
-        // Theme-aware neutrals — flip via prefers-color-scheme in global.css
+        // Neutrals — CSS variables in global.css
         bg: 'rgb(var(--color-bg) / <alpha-value>)',
         surface: 'rgb(var(--color-surface) / <alpha-value>)',
         'surface-elevated':
@@ -22,7 +21,7 @@ module.exports = {
         'text-muted': 'rgb(var(--color-text-muted) / <alpha-value>)',
         'text-subtle': 'rgb(var(--color-text-subtle) / <alpha-value>)',
 
-        // Brand & semantic — constant across themes
+        // Brand & semantic
         primary: {
           DEFAULT: '#5B47FB',
           pressed: '#4A38D4',

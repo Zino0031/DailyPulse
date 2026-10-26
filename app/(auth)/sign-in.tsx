@@ -14,14 +14,12 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { BackButton } from "@/components/ui/BackButton";
-import { useColorScheme } from "@/components/useColorScheme";
 import { useAuth } from "@/hooks/useAuth";
+import { useThemeTokens } from "@/hooks/useThemeTokens";
 
 export default function SignInScreen() {
   const router = useRouter();
-  const scheme = useColorScheme();
-  const iconColor = scheme === "dark" ? "#6B7280" : "#9CA3AF";
-  const foregroundColor = scheme === "dark" ? "#F5F7FA" : "#0A0C0F";
+  const { textSubtle: iconColor, text: foregroundColor } = useThemeTokens();
   const { signIn, signInWithGoogle } = useAuth();
 
   const [email, setEmail] = useState("");
@@ -93,7 +91,7 @@ export default function SignInScreen() {
                   disabled: busy,
                   busy: googleSubmitting,
                 }}
-                className={`h-16 flex-row items-center justify-center gap-3 rounded-full border border-border bg-surface ${
+                className={`h-[52px] flex-row items-center justify-center gap-3 rounded-full border border-border bg-surface active:bg-primary-tint ${
                   busy ? "opacity-60" : ""
                 }`}
               >
@@ -206,7 +204,7 @@ export default function SignInScreen() {
                   disabled: !canSubmit || busy,
                   busy: submitting,
                 }}
-                className={`h-16 items-center justify-center rounded-full bg-primary active:opacity-80 ${
+                className={`h-[52px] items-center justify-center rounded-full bg-primary active:bg-primary-pressed ${
                   !canSubmit || busy ? "opacity-60" : ""
                 }`}
               >

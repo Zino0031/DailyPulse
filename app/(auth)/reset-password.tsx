@@ -15,7 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BackButton } from '@/components/ui/BackButton';
-import { useColorScheme } from '@/components/useColorScheme';
+import { useThemeTokens } from '@/hooks/useThemeTokens';
 import { useAuth } from '@/hooks/useAuth';
 
 const BRAND = '#5B47FB';
@@ -124,7 +124,7 @@ export default function ResetPasswordScreen() {
                       onPress={() => router.replace('/forgot-password')}
                       accessibilityRole="button"
                       accessibilityLabel="Request a new reset link"
-                      className="h-16 items-center justify-center rounded-full bg-primary active:opacity-80">
+                      className="h-[52px] items-center justify-center rounded-full bg-primary active:bg-primary-pressed">
                       <Text className="text-headline font-semibold text-white">
                         Request a new link
                       </Text>
@@ -136,7 +136,7 @@ export default function ResetPasswordScreen() {
                   </View>
                 ) : (
                   <>
-                    <View className="gap-5">
+                    <View className="gap-4">
                       <LabeledPasswordInput
                         label="New password"
                         placeholder="Enter new password"
@@ -177,7 +177,7 @@ export default function ResetPasswordScreen() {
                         disabled: !canSubmit,
                         busy: submitting,
                       }}
-                      className={`h-16 items-center justify-center rounded-full bg-primary active:opacity-80 ${
+                      className={`h-[52px] items-center justify-center rounded-full bg-primary active:bg-primary-pressed ${
                         !canSubmit ? 'opacity-60' : ''
                       }`}>
                       {submitting ? (
@@ -220,8 +220,7 @@ function LabeledPasswordInput({
   visible: boolean;
   onToggleVisible: () => void;
 }) {
-  const scheme = useColorScheme();
-  const iconColor = scheme === 'dark' ? '#6B7280' : '#9CA3AF';
+  const { textSubtle: iconColor } = useThemeTokens();
 
   return (
     <View className="gap-2">
@@ -270,7 +269,7 @@ function SuccessView({ onContinue }: { onContinue: () => void }) {
     <View className="flex-1 items-center justify-between pt-16 pb-4">
       <View className="items-center">
         <CheckBurst />
-        <Text className="mt-10 text-title-1 font-bold text-text">
+        <Text className="mt-8 text-title-1 font-bold text-text">
           Password updated!
         </Text>
         <Text className="mt-2 px-8 text-center text-callout text-text-muted">
@@ -282,7 +281,7 @@ function SuccessView({ onContinue }: { onContinue: () => void }) {
         onPress={onContinue}
         accessibilityRole="button"
         accessibilityLabel="Continue"
-        className="h-16 w-full items-center justify-center rounded-full bg-primary active:opacity-80">
+        className="h-[52px] w-full items-center justify-center rounded-full bg-primary active:bg-primary-pressed">
         <Text className="text-headline font-semibold text-white">Continue</Text>
       </Pressable>
     </View>

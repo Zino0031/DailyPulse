@@ -56,7 +56,7 @@ export default function AvatarCaptureScreen() {
       <Stack.Screen options={{ title: 'Your avatar' }} />
       <ScrollView
         className="flex-1 bg-bg"
-        contentContainerClassName="gap-8 px-6 pb-8 pt-12">
+        contentContainerClassName="gap-8 px-6 pb-8 pt-6">
         <View>
           <Text className="text-title-1 font-bold text-text">Your avatar</Text>
           <Text className="mt-1 text-callout text-text-muted">

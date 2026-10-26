@@ -76,7 +76,7 @@ export function LocationPicker({ value, onChange, error }: LocationPickerProps) 
           hitSlop={6}
           accessibilityRole="button"
           accessibilityLabel="Change location"
-          className="h-10 w-10 items-center justify-center rounded-full active:bg-primary-tint">
+          className="h-11 w-11 items-center justify-center rounded-full active:bg-primary-tint">
           <X size={18} strokeWidth={1.75} color={tokens.textMuted} />
         </Pressable>
       </View>

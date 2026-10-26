@@ -31,7 +31,7 @@ export function PlanSection() {
   return (
     <View
       testID="profile-plan"
-      className="mt-6 gap-4 rounded-2xl border border-border bg-surface p-5">
+      className="mt-8 gap-4 rounded-xl bg-surface p-5 shadow-md">
       <View className="flex-row items-start justify-between gap-3">
         <View className="flex-1 gap-1">
           <Text accessibilityRole="header" className="text-headline font-semibold text-text">

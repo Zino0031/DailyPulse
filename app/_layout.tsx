@@ -7,7 +7,6 @@ import {
   Inter_700Bold,
 } from '@expo-google-fonts/inter';
 import {
-  DarkTheme,
   DefaultTheme,
   Stack,
   ThemeProvider,
@@ -17,6 +16,7 @@ import {
 } from 'expo-router';
 // Welcome lives at /welcome inside the (auth) group — typed-routes won't
 // know about it until the next `expo start`, so we cast when navigating.
+import { getFocusedRouteNameFromRoute } from 'expo-router/react-navigation';
 import * as SplashScreen from 'expo-splash-screen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
@@ -26,9 +26,9 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { Paywall } from '@/components/subscription/Paywall';
-import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfileDetails } from '@/hooks/useProfile';
+import { useThemeTokens } from '@/hooks/useThemeTokens';
 import { usePurchasesIdentity } from '@/hooks/useSubscription';
 import { perfMark, perfMeasure } from '@/utils/perf';
 import { PERSIST_BUSTER, shouldPersistQuery } from '@/utils/queryCache';
@@ -42,8 +42,16 @@ export {
 } from 'expo-router';
 
 export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
+  // Deep links into a stacked route keep the tabs underneath for back.
   initialRouteName: '(tabs)',
+};
+
+// Route name → title for the tab group (see the `(tabs)` screen below).
+const TAB_TITLES: Record<string, string> = {
+  index: 'Today',
+  closet: 'Closet',
+  lookbook: 'Lookbook',
+  profile: 'Profile',
 };
 
 // Prevent the splash screen from auto-hiding before fonts + session restore.
@@ -82,6 +90,7 @@ const persister = createAsyncStoragePersister({
 });
 
 export default function RootLayout() {
+  const tokens = useThemeTokens();
   const [fontsLoaded, fontError] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     Inter_400Regular,
@@ -89,7 +98,6 @@ export default function RootLayout() {
     Inter_600SemiBold,
     Inter_700Bold,
   });
-  const colorScheme = useColorScheme();
 
   // Expo Router uses Error Boundaries to catch errors in the navigation tree.
   useEffect(() => {
@@ -109,17 +117,47 @@ export default function RootLayout() {
             shouldDehydrateQuery: shouldPersistQuery,
           },
         }}>
+        {/* Page colour behind screens, so tab cross-fades don't flash grey. */}
         <ThemeProvider
-          value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          value={{
+            ...DefaultTheme,
+            colors: { ...DefaultTheme.colors, background: tokens.bg },
+          }}>
           <BootGate fontsLoaded={fontsLoaded}>
             <Stack>
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen
+                name="(tabs)"
+                // Title = the active tab, so iOS's back-button long-press menu
+                // reads "Today" / "Closet"… instead of "(tabs)".
+                options={({ route }) => ({
+                  headerShown: false,
+                  title: TAB_TITLES[getFocusedRouteNameFromRoute(route) ?? 'index'] ?? 'Today',
+                })}
+              />
               <Stack.Screen name="(auth)" options={{ headerShown: false }} />
               <Stack.Screen
                 name="onboarding"
                 options={{ headerShown: false }}
               />
-              <Stack.Screen name="outfit" options={{ headerShown: false }} />
+              {/* Bare back chevron on the page colour; the screen draws its own title. */}
+              <Stack.Screen
+                name="outfit/[id]"
+                options={{
+                  title: '',
+                  headerBackButtonDisplayMode: 'minimal',
+                  headerShadowVisible: false,
+                  headerStyle: { backgroundColor: tokens.bg },
+                }}
+              />
+              <Stack.Screen
+                name="edit-profile"
+                options={{
+                  presentation: 'modal',
+                  title: 'Edit profile',
+                  headerShadowVisible: false,
+                  headerStyle: { backgroundColor: tokens.bg },
+                }}
+              />
               <Stack.Screen
                 name="item/new"
                 options={{ presentation: 'modal', title: 'New item' }}
@@ -128,7 +166,6 @@ export default function RootLayout() {
                 name="item/[id]"
                 options={{ presentation: 'modal', title: 'Edit item' }}
               />
-              <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
             </Stack>
             {/* One app-wide paywall; screens open it via usePaywallStore. */}
             <Paywall />

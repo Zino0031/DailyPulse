@@ -3,7 +3,7 @@
 **Status:** v1 — baseline tokens for all screens. Owner: design system ticket (Epic 0 #20).
 **Reach:** every feature screen built from this point forward reads from these tokens. Do not hardcode colors, spacings, or font sizes outside this file; add a new token here instead.
 
-> **Deprecation note:** `constants/Colors.ts` and `components/Themed.tsx` are leftover from the Expo tabs template and are **deprecated**. They remain in-tree only so the scaffold screens (`app/(tabs)/index.tsx`, `app/(tabs)/two.tsx`, `app/modal.tsx`, `app/+not-found.tsx`) stay runnable until each is rewritten in its feature ticket. **Do not use them in new code** — use Tailwind/NativeWind classes against the tokens below.
+> **Light mode only.** `app.json` locks `userInterfaceStyle: "light"`. There is no dark palette; never add `dark:` variants or branch on the color scheme. The Expo-template leftovers (`constants/Colors.ts`, `components/Themed.tsx`, `useColorScheme`) were removed in #37.
 
 ---
 
@@ -17,21 +17,21 @@ Reference set lives in `mock-ups/` — the Fabrx guide (Typography/Icons/Guides 
 
 ## 2. Color tokens
 
-Colors are defined once as CSS variables in `global.css` and consumed via Tailwind utility classes declared in `tailwind.config.js`. Dark mode flips the variables; the class names (`bg-bg`, `text-text`, `border-border`) stay identical in both schemes.
+Colors are defined once as CSS variables in `global.css` and consumed via Tailwind utility classes declared in `tailwind.config.js`. For props that can't take a className (icon `color`, `placeholderTextColor`), read the hex mirror from `useThemeTokens()` (`hooks/useThemeTokens.ts`).
 
-### Neutrals (theme-aware)
+### Neutrals
 
-| Token | Class | Light | Dark | Use |
-|---|---|---|---|---|
-| `bg` | `bg-bg` | `#F5F7FA` | `#0B0D10` | App background |
-| `surface` | `bg-surface` | `#FFFFFF` | `#15181C` | Default card / sheet |
-| `surface-elevated` | `bg-surface-elevated` | `#FFFFFF` | `#1C2026` | Floating / stacked card |
-| `border` | `border-border` | `#E5E7EB` | `#262B33` | Hairline divider, input outline |
-| `text` | `text-text` | `#0A0C0F` | `#F5F7FA` | Primary text |
-| `text-muted` | `text-text-muted` | `#5B6472` | `#9BA3AF` | Secondary text |
-| `text-subtle` | `text-text-subtle` | `#9CA3AF` | `#6B7280` | Captions, placeholders |
+| Token | Class | Hex | Use |
+|---|---|---|---|
+| `bg` | `bg-bg` | `#F5F7FA` | App background |
+| `surface` | `bg-surface` | `#FFFFFF` | Default card / sheet |
+| `surface-elevated` | `bg-surface-elevated` | `#FFFFFF` | Floating / stacked card |
+| `border` | `border-border` | `#E5E7EB` | Hairline divider, input outline |
+| `text` | `text-text` | `#0A0C0F` | Primary text |
+| `text-muted` | `text-text-muted` | `#5B6472` | Secondary text |
+| `text-subtle` | `text-text-subtle` | `#9CA3AF` | Captions, placeholders |
 
-### Brand & semantic (constant across themes)
+### Brand & semantic
 
 | Token | Class | Hex | Use |
 |---|---|---|---|
@@ -58,7 +58,6 @@ Each mood maps to a dedicated accent used for the mood chip and the Daily Home b
 
 - The brand indigo (`primary`) is the **only** color used for the primary CTA. Never use `success`/`warning`/`danger` as a brand accent.
 - Mood accents are allowed as hero-card backgrounds, chip fills, and subtle background washes — **not** as text colors. Pair them with white or near-white text (contrast ratio ≥ 4.5:1).
-- Dark mode shadows are also softened by using `surface-elevated` for depth rather than relying on shadow alone.
 
 ---
 
@@ -140,7 +139,7 @@ Standards for every screen:
 
 ## 6. Shadow
 
-Single-layer soft shadows, no harsh offsets. In dark mode, rely on `surface-elevated` for depth rather than heavier shadows.
+Single-layer soft shadows, no harsh offsets.
 
 | Token | Class | Value |
 |---|---|---|
@@ -219,15 +218,20 @@ The signature navigation pattern. Reference: `mock-ups/` welcome card screenshot
 | Property | Rule |
 |---|---|
 | Bar height | 72pt + safe-area bottom inset |
-| Bar background | `bg-surface` with a concave SVG notch under the FAB |
+| Bar background | `bg-surface` with a concave SVG notch under the FAB; the bar floats over the screens, so the notch is see-through |
 | Layout | 2 side tab items ↔ center FAB ↔ 2 side tab items (max 4 side items, min 2) |
 | Center FAB | 56pt circle, `bg-primary`, white icon, `shadow-lg`, lifted ~24pt above the bar |
-| Primary action | "Generate today's outfit" → routes to `app/outfit/[id].tsx` |
-| Motion | FAB press scales `0.96` → `1.0` on a `withSpring({ damping: 15 })`; tab switch fades the active indicator at 250ms |
+| Primary action | "Generate today's outfit" → `router.push('/outfit/new')` (`app/outfit/[id].tsx`) |
+| Active tab | Filled icon (Lucide `fill={color}`); inactive tabs stay outlined. One shared dot glides under the active tab |
+| Motion | FAB press scales `0.96` → `1.0` on a `withSpring({ damping: 15 })`. Active icon pops (1.15 → 1) and lifts 2pt. The dot travels 350ms `Easing.inOut(cubic)` with a 2× stretch, no overshoot. Screens fade in over 220ms via `TabSceneFade` (not the navigator's `animation: 'fade'`, which can strand a screen invisible on quick switches) |
 | Accessibility | FAB `accessibilityLabel="Generate today's outfit"`, 56pt satisfies 44pt minimum |
-| Implementation note | Build the notch as a thin custom `react-native-svg` component — avoids a heavy third-party bar dep. Spec'd here; actual component lands in the shell ticket. |
+| Implementation | `components/navigation/FabTabBar.tsx`, passed as `tabBar` in `app/(tabs)/_layout.tsx`. The notch is a single `react-native-svg` path with a hairline on the top edge only. Tab screens pad their scroll content with `useTabBarInset()` so the last row clears the bar |
 
-**Current shell (Expo Router bottom tabs).** The FAB bar above is the target pattern; today the shell is a plain 4-tab bar: **Today · Closet · Lookbook · Profile** (`app/(tabs)/_layout.tsx`). The Lookbook has its own tab (issue #50) — it is no longer a section of Profile.
+**Shell.** Tabs are **Today · Closet** ↔ FAB ↔ **Lookbook · Profile** (#37). Every tab hides the stock header and draws its own safe-area title. The Lookbook has its own tab (issue #50) — it is no longer a section of Profile.
+
+**Modals.** The paywall and Edit profile are native page sheets (RN `Modal` `presentationStyle="pageSheet"` / Expo Router `presentation: 'modal'`): drag down to dismiss on iOS. Stacked headers use a bare back chevron on `bg-bg` with no shadow.
+
+**Cards with photos** (closet item, lookbook look): `rounded-xl bg-surface shadow-md`, 3:4 photo on top, `px-3 pb-3 pt-2` footer. Put the shadow on the outer view and `overflow-hidden` on an inner one — on iOS, clipping the shadowed view hides its shadow. Skeletons mirror the same footer so nothing jumps on load.
 
 ### AI preview (persisted)
 
@@ -247,13 +251,11 @@ The signature navigation pattern. Reference: `mock-ups/` welcome card screenshot
 
 ---
 
-## 9. Dark mode
+## 9. Appearance — light only
 
-- Day one. `app.json` sets `userInterfaceStyle: "automatic"`, so the OS drives the scheme.
-- Implemented via CSS variables in `global.css`: `.dark { … }` block overrides the `:root` block.
-- NativeWind v4 toggles the `.dark` class automatically based on `useColorScheme()`.
-- Every token class flips: `bg-bg`, `text-text`, `border-border`, `bg-surface`, etc.
-- Brand and mood accents are intentionally constant across schemes.
+- `app.json` sets `userInterfaceStyle: "light"` (`expo-system-ui` applies it on Android), so the app ignores the OS dark setting.
+- `global.css` has a single `:root` block; there is no dark variable set and no `dark:` class usage.
+- Removed in #37 — previously the app followed the OS scheme.
 
 ---
 
@@ -285,10 +287,10 @@ The signature navigation pattern. Reference: `mock-ups/` welcome card screenshot
 </Pressable>
 ```
 
-### Themed body text (auto light/dark)
+### Body text
 
 ```tsx
-<Text className="text-body text-text">Readable in both schemes.</Text>
+<Text className="text-body text-text">Primary body copy.</Text>
 <Text className="text-footnote text-text-muted">Secondary metadata.</Text>
 ```
 
@@ -301,8 +303,6 @@ Scope-protected so this stays reviewable:
 - **No scaffold component rewrites.** `components/ui/{Button,Card,Input}.tsx`, `WeatherWidget`, `ClosetGrid`, `AvatarPreview` stay as stubs; they adopt the tokens in their own feature tickets.
 - **No animated-background component.** Spec'd above; implementation ships with the Daily Home ticket.
 - **No icon library adoption.** Spec'd above; adopted as screens are rebuilt.
-- **No tab bar implementation.** Spec'd above; built in the shell/navigation ticket.
-- **No scaffold cleanup.** `Themed.tsx`, `Colors.ts`, `useColorScheme` helpers stay in place until each scaffold screen is replaced.
 
 ---
 
@@ -310,3 +310,4 @@ Scope-protected so this stays reviewable:
 
 - **v1 (2026-10-07)** — Initial design system. Palette, type scale, spacing, radius, shadow, mood accents, floating-FAB tab bar spec.
 - **v2 (2026-10-18)** — Lookbook is its own bottom tab (Today · Closet · Lookbook · Profile); AI previews persist to the outfit row and are reused by the Lookbook + saved-look detail, with a Regenerate action (issue #50).
+- **v3 (2026-10-26)** — Light mode only; floating-FAB tab bar shipped; buttons and section rhythm audited against §4/§7; native page-sheet modals; photo-card anatomy (issue #37).

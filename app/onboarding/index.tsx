@@ -34,7 +34,7 @@ export default function OnboardingScreen() {
           A few quick answers so every outfit fits your style and your weather.
         </Text>
 
-        <View className="mt-10 gap-6">
+        <View className="mt-8 gap-6">
           <Step icon={Sparkles} title="Your style" body="Pick the looks you reach for most." />
           <Step icon={CloudSun} title="Your weather" body="Your city lets us dress you for the forecast." />
           <Step icon={Shirt} title="Your avatar" body="An optional selfie so outfit previews look like you." />
@@ -51,7 +51,7 @@ export default function OnboardingScreen() {
           </View>
         )}
 
-        <View className="mt-10 gap-3">
+        <View className="mt-8 gap-3">
           <Button
             testID="onboarding-start"
             label={draft ? 'Continue where you left off' : 'Get started'}

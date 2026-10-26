@@ -4,22 +4,15 @@ import { useRouter } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { useColorScheme } from "@/components/useColorScheme";
-
 const BRAND = "#5B47FB";
 
 export default function WelcomeScreen() {
   const router = useRouter();
-  const scheme = useColorScheme();
-  const background =
-    scheme === "dark"
-      ? require("@/assets/images/welcome-night.png")
-      : require("@/assets/images/welcome.png");
 
   return (
     <View className="flex-1 bg-bg">
       <Image
-        source={background}
+        source={require("@/assets/images/welcome.png")}
         style={{ position: "absolute", inset: 0 }}
         contentFit="cover"
       />
@@ -29,7 +22,7 @@ export default function WelcomeScreen() {
           <View className="pt-6">
             <MaterialCommunityIcons
               name="hanger"
-              color={scheme === "dark" ? "white" : BRAND}
+              color={BRAND}
               size={64}
             />
 
@@ -52,7 +45,7 @@ export default function WelcomeScreen() {
               onPress={() => router.push("/sign-up")}
               accessibilityRole="button"
               accessibilityLabel="Get started"
-              className="h-16 flex-row items-center justify-center px-6 rounded-full bg-primary active:opacity-80 relative"
+              className="relative h-[52px] flex-row items-center justify-center rounded-full bg-primary px-6 active:bg-primary-pressed"
             >
               <Text className="text-headline font-semibold text-white flex-1 text-center">
                 Get started
@@ -69,9 +62,9 @@ export default function WelcomeScreen() {
               onPress={() => router.push("/sign-in")}
               accessibilityRole="button"
               accessibilityLabel="I already have an account"
-              className="mt-4 items-center py-2"
+              className="mt-4 h-11 items-center justify-center rounded-full active:bg-primary-tint"
             >
-              <Text className="text-footnote font-semibold text-primary dark:text-white">
+              <Text className="text-footnote font-semibold text-primary">
                 I already have an account
               </Text>
             </Pressable>
