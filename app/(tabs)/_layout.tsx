@@ -1,67 +1,54 @@
-import { SymbolView } from 'expo-symbols';
-import { Link, Tabs } from 'expo-router';
-import { Platform, Pressable } from 'react-native';
+import { Bookmark, Shirt, Sun, UserRound } from 'lucide-react-native';
+import { Tabs } from 'expo-router';
 
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { useClientOnlyValue } from '@/components/useClientOnlyValue';
+import { FabTabBar } from '@/components/navigation/FabTabBar';
+import { TabSceneFade } from '@/components/navigation/TabSceneFade';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme].tint,
-        // Disable the static render of the header on web
-        // to prevent a hydration error in React Navigation v6.
-        headerShown: useClientOnlyValue(false, true),
-      }}>
+      tabBar={(props) => <FabTabBar {...props} />}
+      // Every tab draws its own safe-area header. The active icon is filled.
+      screenOptions={{ headerShown: false }}
+      // Our own fade, not `animation: 'fade'` (that one can strand a screen
+      // invisible on quick tab switches).
+      screenLayout={({ children }) => <TabSceneFade>{children}</TabSceneFade>}>
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Tab One',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
-          ),
-          headerRight: () => (
-            <Link href="/modal" asChild>
-              <Pressable style={{ marginRight: 15 }}>
-                {({ pressed }) => (
-                  <SymbolView
-                    name={{ ios: 'info.circle', android: 'info', web: 'info' }}
-                    size={25}
-                    tintColor={Colors[colorScheme].text}
-                    style={{ opacity: pressed ? 0.5 : 1 }}
-                  />
-                )}
-              </Pressable>
-            </Link>
+          title: 'Today',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Sun size={size} strokeWidth={1.5} color={color} fill={focused ? color : 'none'} />
           ),
         }}
       />
       <Tabs.Screen
-        name="two"
+        name="closet"
         options={{
-          title: 'Tab Two',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
+          title: 'Closet',
+          tabBarAccessibilityLabel: 'Closet, your wardrobe items',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Shirt size={size} strokeWidth={1.5} color={color} fill={focused ? color : 'none'} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="lookbook"
+        options={{
+          title: 'Lookbook',
+          tabBarAccessibilityLabel: 'Lookbook, your saved looks',
+          tabBarIcon: ({ color, size, focused }) => (
+            <Bookmark size={size} strokeWidth={1.5} color={color} fill={focused ? color : 'none'} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profile',
+          tabBarAccessibilityLabel: 'Profile, your account and sign out',
+          tabBarIcon: ({ color, size, focused }) => (
+            <UserRound size={size} strokeWidth={1.5} color={color} fill={focused ? color : 'none'} />
           ),
         }}
       />

@@ -1,0 +1,313 @@
+# DailyPulse — Design System
+
+**Status:** v1 — baseline tokens for all screens. Owner: design system ticket (Epic 0 #20).
+**Reach:** every feature screen built from this point forward reads from these tokens. Do not hardcode colors, spacings, or font sizes outside this file; add a new token here instead.
+
+> **Light mode only.** `app.json` locks `userInterfaceStyle: "light"`. There is no dark palette; never add `dark:` variants or branch on the color scheme. The Expo-template leftovers (`constants/Colors.ts`, `components/Themed.tsx`, `useColorScheme`) were removed in #37.
+
+---
+
+## 1. Aesthetic direction
+
+Soft iOS: a vivid indigo brand on a cool-neutral canvas, oversized rounded cards that float above a light surface, thin-stroke icons, generous whitespace. Minimalist chrome; expressive moments reserved for hero cards, mood accents and the primary CTA.
+
+Reference set lives in `mock-ups/` — the Fabrx guide (Typography/Icons/Guides screens) is the structural backbone; the product-page and welcome-card screens drive the surface treatment and the floating-FAB tab bar.
+
+---
+
+## 2. Color tokens
+
+Colors are defined once as CSS variables in `global.css` and consumed via Tailwind utility classes declared in `tailwind.config.js`. For props that can't take a className (icon `color`, `placeholderTextColor`), read the hex mirror from `useThemeTokens()` (`hooks/useThemeTokens.ts`).
+
+### Neutrals
+
+| Token | Class | Hex | Use |
+|---|---|---|---|
+| `bg` | `bg-bg` | `#F5F7FA` | App background |
+| `surface` | `bg-surface` | `#FFFFFF` | Default card / sheet |
+| `surface-elevated` | `bg-surface-elevated` | `#FFFFFF` | Floating / stacked card |
+| `border` | `border-border` | `#E5E7EB` | Hairline divider, input outline |
+| `text` | `text-text` | `#0A0C0F` | Primary text |
+| `text-muted` | `text-text-muted` | `#5B6472` | Secondary text |
+| `text-subtle` | `text-text-subtle` | `#9CA3AF` | Captions, placeholders |
+
+### Brand & semantic
+
+| Token | Class | Hex | Use |
+|---|---|---|---|
+| `primary` | `bg-primary` | `#5B47FB` | Primary CTA, FAB, active tab, links |
+| `primary-pressed` | `bg-primary-pressed` | `#4A38D4` | Pressed state of primary |
+| `primary-tint` | `bg-primary-tint` | `#EDE9FE` | Soft primary background (hero cards, chips) |
+| `success` | `bg-success` | `#22C58B` | Confirmations, saved outfit toast |
+| `warning` | `bg-warning` | `#FF9A3C` | Caution, tier-limit near-cap |
+| `danger` | `bg-danger` | `#FF4D55` | Destructive actions, validation errors |
+| `accent-mint` | `bg-accent-mint` | `#5DE4C7` | Decorative accents (section markers, celebratory ticks) |
+
+### Mood accents
+
+Each mood maps to a dedicated accent used for the mood chip and the Daily Home background wash. All four are distinct from `primary` so the UI doesn't collapse into one color.
+
+| Mood | Class | Hex | Rationale |
+|---|---|---|---|
+| Energetic | `bg-mood-energetic` | `#FF7A4D` | Warm coral — matches Onboarding 04 |
+| Professional | `bg-mood-professional` | `#1E2A4A` | Deep navy — authority without clashing with indigo primary |
+| Relaxed | `bg-mood-relaxed` | `#22C58B` | Mint — calm/natural, reuses `success` hue |
+| Creative | `bg-mood-creative` | `#E85D9E` | Magenta-pink — pulls away from indigo |
+
+### Palette rules
+
+- The brand indigo (`primary`) is the **only** color used for the primary CTA. Never use `success`/`warning`/`danger` as a brand accent.
+- Mood accents are allowed as hero-card backgrounds, chip fills, and subtle background washes — **not** as text colors. Pair them with white or near-white text (contrast ratio ≥ 4.5:1).
+
+---
+
+## 3. Typography
+
+### Font strategy
+
+- **iOS**: SF Pro Display is available via `className="font-system"` (resolves to `'System'`, which iOS maps to SF Pro Display).
+- **All platforms (default)**: **Inter 4** loaded via `@expo-google-fonts/inter`. Default `className="font-sans"` resolves to `Inter_400Regular`. Inter was designed as a close SF-alike and reads as iOS-native on iPhone while giving us consistent typography on Android and web.
+
+Weight → family mapping (each weight is its own loaded family in RN):
+
+| Weight | Class | Family |
+|---|---|---|
+| Regular 400 | `font-sans` | `Inter_400Regular` |
+| Medium 500 | `font-medium` | `Inter_500Medium` |
+| SemiBold 600 | `font-semibold` | `Inter_600SemiBold` |
+| Bold 700 | `font-bold` | `Inter_700Bold` |
+
+### Type scale (mobile-tuned)
+
+Sized for iPhone and translated down from the Fabrx guide — the 80px/60px display sizes don't survive on a 390pt viewport.
+
+| Token | Class | Size / Line | Weight | Use |
+|---|---|---|---|---|
+| `display` | `text-display` | 34 / 41 | Bold | Onboarding hero titles |
+| `title-1` | `text-title-1` | 28 / 34 | Bold | Screen titles |
+| `title-2` | `text-title-2` | 22 / 28 | SemiBold | Section titles |
+| `title-3` | `text-title-3` | 20 / 25 | SemiBold | Card titles |
+| `headline` | `text-headline` | 17 / 22 | SemiBold | Emphasis, button labels |
+| `body` | `text-body` | 17 / 22 | Regular | Default body text |
+| `callout` | `text-callout` | 16 / 21 | Regular | Secondary body |
+| `subhead` | `text-subhead` | 15 / 20 | Regular | Form labels |
+| `footnote` | `text-footnote` | 13 / 18 | Regular | Metadata, timestamps |
+| `caption` | `text-caption` | 12 / 16 | Regular | Image captions, chip labels |
+
+### Typography rules
+
+- Combine the size token with the weight class: `className="text-title-1 font-bold text-text"`.
+- Avoid letter-spacing overrides; Inter and SF Pro are both metrics-tuned for their size.
+- Line height is set in the size token; don't override with `leading-*` unless there is a specific reason.
+- Numeric content (prices, counts) can use `font-medium` to keep rhythm with surrounding `font-sans`.
+
+---
+
+## 4. Spacing — 8pt grid
+
+Strict 8pt grid, with 4pt allowed for intra-component rhythm (e.g. chip padding, badge insets). Tailwind spacing scale is unchanged; use these values:
+
+```
+0 · 1 (4) · 2 (8) · 3 (12) · 4 (16) · 5 (20) · 6 (24) · 7 (28) · 8 (32) · 10 (40) · 12 (48) · 14 (56) · 16 (64) · 20 (80) · 24 (96)
+```
+
+Standards for every screen:
+
+| Context | Spacing | Class |
+|---|---|---|
+| Screen horizontal padding | 24 | `px-6` |
+| Section vertical rhythm | 32 | `gap-8` or `mb-8` |
+| Card inner padding | 16–20 | `p-4` to `p-5` |
+| Stack between inputs | 16 | `gap-4` |
+| Chip padding (horizontal) | 12 | `px-3` |
+| Icon ↔ label gap | 8 | `gap-2` |
+
+---
+
+## 5. Radius
+
+| Token | Value | Class | Use |
+|---|---|---|---|
+| `sm` | 8 | `rounded-sm` | Small badges |
+| `md` | 12 | `rounded-md` | Inputs, chips |
+| `lg` | 16 | `rounded-lg` | Buttons, small cards |
+| `xl` | 24 | `rounded-xl` | Default content cards |
+| `2xl` | 32 | `rounded-2xl` | Bottom sheets, hero-reveal panels (top corners only) |
+| `full` | 9999 | `rounded-full` | Pills, avatars, FAB |
+
+---
+
+## 6. Shadow
+
+Single-layer soft shadows, no harsh offsets.
+
+| Token | Class | Value |
+|---|---|---|
+| `sm` | `shadow-sm` | `0 1px 2px rgb(0 0 0 / 0.04)` |
+| `md` | `shadow-md` | `0 4px 16px rgb(0 0 0 / 0.08)` — default card |
+| `lg` | `shadow-lg` | `0 12px 32px rgb(0 0 0 / 0.12)` — floating sheet, FAB |
+
+---
+
+## 7. Component anatomy
+
+Each entry defines the minimum rules every implementation must follow. Actual components (`components/ui/*`) will be rebuilt against these specs in follow-up tickets.
+
+### Button
+
+| Property | Rule |
+|---|---|
+| Heights | `sm` 36 · `md` 44 · `lg` 52 |
+| Radius | `rounded-full` (pill) default; `rounded-lg` for secondary square buttons |
+| Minimum touch target | 44pt (iOS HIG) |
+| Primary | `bg-primary` + `text-white`; pressed → `bg-primary-pressed` |
+| Secondary | `border border-border` + `text-text`; pressed → `bg-primary-tint` |
+| Ghost | `text-primary` only; pressed → `bg-primary-tint` |
+| Icon-only | 44×44 square with `rounded-full` for circular, `rounded-lg` for square |
+
+### Chip (filter / mood)
+
+| Property | Rule |
+|---|---|
+| Height | 32 |
+| Radius | `rounded-full` |
+| Idle | `border border-border` + `text-text` |
+| Active | Mood-matched fill (e.g. `bg-mood-energetic`) + `text-white`; outline removed |
+| Padding | `px-3 py-1.5` |
+
+### Card
+
+| Property | Rule |
+|---|---|
+| Background | `bg-surface` (default) or `bg-surface-elevated` when stacked |
+| Radius | `rounded-xl` |
+| Shadow | `shadow-md` |
+| Padding | `p-4` to `p-5` |
+| Hero card variant | Fill with `bg-primary` or `bg-mood-*`, use `text-white`, add decorative confetti/illustration as `absolute` children |
+
+### Sheet (bottom sheet, hero-reveal panel)
+
+| Property | Rule |
+|---|---|
+| Radius | `rounded-t-2xl` (top corners only) |
+| Shadow | `shadow-lg` |
+| Grabber (if any) | 36×4, `rounded-full`, `bg-border`, centered 8pt from top |
+
+### Input
+
+| Property | Rule |
+|---|---|
+| Height | 48 |
+| Radius | `rounded-lg` |
+| Background | `bg-surface` |
+| Border | `border border-border`; focused → `border-primary` |
+| Icon slot | Right-aligned, 20pt icon, `pr-3` |
+| Placeholder | `text-text-subtle` |
+
+### Icons
+
+- Default size 24; dense 20; large 28.
+- Thin stroke (1.5pt).
+- iOS: prefer `expo-symbols` (SF Symbols) via `SymbolView`.
+- Android / web / cross-platform: use `lucide-react-native` (thin-stroke set that pairs with SF Symbols visually).
+
+### Floating-FAB tab bar
+
+The signature navigation pattern. Reference: `mock-ups/` welcome card screenshot (gift-card app with purple hero and center FAB).
+
+| Property | Rule |
+|---|---|
+| Bar height | 72pt + safe-area bottom inset |
+| Bar background | `bg-surface` with a concave SVG notch under the FAB; the bar floats over the screens, so the notch is see-through |
+| Layout | 2 side tab items ↔ center FAB ↔ 2 side tab items (max 4 side items, min 2) |
+| Center FAB | 56pt circle, `bg-primary`, white icon, `shadow-lg`, lifted ~24pt above the bar |
+| Primary action | "Generate today's outfit" → `router.push('/outfit/new')` (`app/outfit/[id].tsx`) |
+| Active tab | Filled icon (Lucide `fill={color}`); inactive tabs stay outlined. One shared dot glides under the active tab |
+| Motion | FAB press scales `0.96` → `1.0` on a `withSpring({ damping: 15 })`. Active icon pops (1.15 → 1) and lifts 2pt. The dot travels 350ms `Easing.inOut(cubic)` with a 2× stretch, no overshoot. Screens fade in over 220ms via `TabSceneFade` (not the navigator's `animation: 'fade'`, which can strand a screen invisible on quick switches) |
+| Accessibility | FAB `accessibilityLabel="Generate today's outfit"`, 56pt satisfies 44pt minimum |
+| Implementation | `components/navigation/FabTabBar.tsx`, passed as `tabBar` in `app/(tabs)/_layout.tsx`. The notch is a single `react-native-svg` path with a hairline on the top edge only. Tab screens pad their scroll content with `useTabBarInset()` so the last row clears the bar |
+
+**Shell.** Tabs are **Today · Closet** ↔ FAB ↔ **Lookbook · Profile** (#37). Every tab hides the stock header and draws its own safe-area title. The Lookbook has its own tab (issue #50) — it is no longer a section of Profile.
+
+**Modals.** The paywall and Edit profile are native page sheets (RN `Modal` `presentationStyle="pageSheet"` / Expo Router `presentation: 'modal'`): drag down to dismiss on iOS. Stacked headers use a bare back chevron on `bg-bg` with no shadow.
+
+**Cards with photos** (closet item, lookbook look): `rounded-xl bg-surface shadow-md`, 3:4 photo on top, `px-3 pb-3 pt-2` footer. Put the shadow on the outer view and `overflow-hidden` on an inner one — on iOS, clipping the shadowed view hides its shadow. Skeletons mirror the same footer so nothing jumps on load.
+
+### AI preview (persisted)
+
+- "Preview with AI" on the outfit card renders imagery from Cloudflare (`render-outfit`) and **persists** it against the outfit row (`rendered_image_url`, a storage path). Opening a saved look — or the Lookbook thumbnail — reuses that render with no second render and no second preview spend (issue #50).
+- The card shows the persisted render immediately; a small **Regenerate preview** action re-renders and overwrites it (normal preview-quota rules apply).
+- Previewing does **not** add a look to the Lookbook: **Save** still gates what appears there. On-device boards get an unsaved draft row on first preview so Save can flip it instead of duplicating.
+- Budget refusals show the upgrade path (`preview` paywall reason); engine failures show "Try again". Never a substituted image.
+
+---
+
+## 8. Motion
+
+- Baseline animation lib: `react-native-reanimated` (already installed).
+- Transitions: 250ms ease-out for most state changes; 350ms for sheets.
+- Press feedback: scale `0.96` → `1.0` on spring; opacity `0.6` on `Pressable` fallback.
+- **Mood background wash**: on the Daily Home screen, apply a subtle animated gradient tied to the active mood. Reanimated shared value, ~8s loop, ±4% saturation shift. Spec only here; implementation lands with the Daily Home ticket.
+
+---
+
+## 9. Appearance — light only
+
+- `app.json` sets `userInterfaceStyle: "light"` (`expo-system-ui` applies it on Android), so the app ignores the OS dark setting.
+- `global.css` has a single `:root` block; there is no dark variable set and no `dark:` class usage.
+- Removed in #37 — previously the app followed the OS scheme.
+
+---
+
+## 10. Usage examples
+
+### Welcome hero card (indigo)
+
+```tsx
+<View className="rounded-xl bg-primary p-5 shadow-md">
+  <Text className="text-headline text-white opacity-80">Today is</Text>
+  <Text className="text-title-1 font-bold text-white">Nola Tjan's Birthday</Text>
+  <Text className="text-footnote text-white opacity-70">on April 16</Text>
+</View>
+```
+
+### Mood chip (active = Relaxed)
+
+```tsx
+<Pressable className="rounded-full bg-mood-relaxed px-3 py-1.5">
+  <Text className="text-caption font-medium text-white">Relaxed</Text>
+</Pressable>
+```
+
+### Secondary button
+
+```tsx
+<Pressable className="h-11 items-center justify-center rounded-full border border-border bg-surface px-6">
+  <Text className="text-headline text-text">View Full Wishlist</Text>
+</Pressable>
+```
+
+### Body text
+
+```tsx
+<Text className="text-body text-text">Primary body copy.</Text>
+<Text className="text-footnote text-text-muted">Secondary metadata.</Text>
+```
+
+---
+
+## 11. What this ticket does NOT change
+
+Scope-protected so this stays reviewable:
+
+- **No scaffold component rewrites.** `components/ui/{Button,Card,Input}.tsx`, `WeatherWidget`, `ClosetGrid`, `AvatarPreview` stay as stubs; they adopt the tokens in their own feature tickets.
+- **No animated-background component.** Spec'd above; implementation ships with the Daily Home ticket.
+- **No icon library adoption.** Spec'd above; adopted as screens are rebuilt.
+
+---
+
+## 12. Changelog
+
+- **v1 (2026-10-07)** — Initial design system. Palette, type scale, spacing, radius, shadow, mood accents, floating-FAB tab bar spec.
+- **v2 (2026-10-18)** — Lookbook is its own bottom tab (Today · Closet · Lookbook · Profile); AI previews persist to the outfit row and are reused by the Lookbook + saved-look detail, with a Regenerate action (issue #50).
+- **v3 (2026-10-26)** — Light mode only; floating-FAB tab bar shipped; buttons and section rhythm audited against §4/§7; native page-sheet modals; photo-card anatomy (issue #37).

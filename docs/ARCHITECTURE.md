@@ -79,12 +79,23 @@
   - `is_saved` (boolean)
   - `created_at` (timestamptz)
 
-- **`subscriptions`**
+- **`subscriptions`** (written only by the `revenuecat-webhook` function)
   - `id` (uuid, PK)
-  - `user_id` (uuid, FK to users.id)
+  - `user_id` (uuid, FK to users.id, unique)
   - `revenuecat_customer_id` (text)
-  - `status` (text)
-  - `expires_at` (timestamptz)
+  - `tier` (text: 'free', 'plus', 'pro')
+  - `status` (text: 'active', 'expired', 'none')
+  - `product_id`, `store`, `environment` ('sandbox' | 'production'), `will_renew`
+  - `expires_at`, `updated_at` (timestamptz)
+
+- **`generation_usage`** (daily AI generation counter, UTC days)
+  - `user_id` (uuid, FK to users.id), `day` (date) — composite PK
+  - `used` (int) — spent atomically by `consume_generation()`
+
+Tier limits (Free 50 items · 1/day, Plus 250 · 5/day + regenerate, Pro
+unlimited + HD) live in `supabase/functions/_shared/tiers.ts`, mirrored in SQL
+by `public.tier_limits()`. `users.tier` is server-owned: a trigger ignores
+client writes to it.
 
 ---
 

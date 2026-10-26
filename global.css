@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Neutral color tokens. The app is light-mode only (`userInterfaceStyle:
+ * "light"` in app.json), so there is a single set of values.
+ * See docs/DESIGN.md §2 for the full palette and rules.
+ *
+ * Values stored as space-separated RGB channels so Tailwind can inject
+ * `/ <alpha-value>` in `rgb(var(--token) / <alpha-value>)`.
+ */
+
+:root {
+  color-scheme: light;
+  --color-bg: 245 247 250;              /* #F5F7FA */
+  --color-surface: 255 255 255;         /* #FFFFFF */
+  --color-surface-elevated: 255 255 255;/* #FFFFFF */
+  --color-border: 229 231 235;          /* #E5E7EB */
+  --color-text: 10 12 15;               /* #0A0C0F */
+  --color-text-muted: 91 100 114;       /* #5B6472 */
+  --color-text-subtle: 156 163 175;     /* #9CA3AF */
+}
+
