@@ -235,8 +235,9 @@ function GenerateFlow() {
                   accessibilityRole="radio"
                   accessibilityState={{ selected: i === selected }}
                   accessibilityLabel={`Preview option ${i + 1}`}
+                  hitSlop={8}
                   onPress={() => setSelected(i)}
-                  className={`flex-1 items-center rounded-full px-3 py-2 ${
+                  className={`h-11 min-w-[44px] flex-1 items-center rounded-full px-3 py-2 ${
                     i === selected ? 'bg-surface shadow-sm' : ''
                   }`}>
                   <Text
