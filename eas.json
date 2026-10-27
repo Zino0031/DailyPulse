@@ -22,6 +22,15 @@
       "android": {
         "buildType": "apk"
       }
+    },
+    "debug": {
+      "extends": "production",
+      "developmentClient": true,
+      "distribution": "store",
+      "environment": "preview",
+      "android": {
+        "buildType": "app-bundle"
+      }
     }
   },
   "submit": {
