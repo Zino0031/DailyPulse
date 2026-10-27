@@ -29,7 +29,7 @@
       "distribution": "store",
       "environment": "preview",
       "android": {
-        "buildType": "bundle"
+        "buildType": "app-bundle"
       }
     }
   },
